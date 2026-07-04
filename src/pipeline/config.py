@@ -45,3 +45,19 @@ def require_env(key: str) -> str:
 
 def edgar_identity() -> str:
     return require_env("EDGAR_IDENTITY")
+
+
+def normalize_pg_dsn(dsn: str) -> str:
+    """Tolerate raw special characters (e.g. '@') in the password part of a
+    postgres URI — common with Supabase-generated passwords."""
+    import re
+    from urllib.parse import quote
+
+    m = re.match(r"^(postgres(?:ql)?://)(.*)@([^@]+)$", dsn.strip())
+    if not m:
+        return dsn.strip()
+    scheme, userinfo, hostpart = m.groups()
+    if ":" not in userinfo:
+        return dsn.strip()
+    user, password = userinfo.split(":", 1)
+    return f"{scheme}{user}:{quote(password, safe='')}@{hostpart}"

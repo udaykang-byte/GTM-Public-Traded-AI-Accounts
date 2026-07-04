@@ -262,16 +262,22 @@ def eightk_signals(edgar_company, company: dict) -> list[Signal]:
             ]
             is_appointment = any(w in lower for w in APPOINT_WORDS)
             if hit_titles and is_appointment:
-                # center the quote on the appointment language, and re-derive
-                # which titles sit near it so the label matches the evidence
-                appoint_pos = min(
-                    (lower.find(w) for w in APPOINT_WORDS if w in lower), default=0
-                )
-                window = lower[max(0, appoint_pos - 200): appoint_pos + 400]
+                # anchor the quote at the appointment word nearest an exec
+                # title — first-in-document lands on cover-page boilerplate
+                appoint_positions = [
+                    m.start() for w in APPOINT_WORDS for m in re.finditer(re.escape(w), lower)
+                ]
+                title_positions = [
+                    m.start() for p in EXEC_TITLES for m in re.finditer(re.escape(p), lower)
+                ]
+                pos = min(
+                    appoint_positions,
+                    key=lambda ap: min(abs(ap - tp) for tp in title_positions),
+                ) if appoint_positions and title_positions else 0
+                window = lower[max(0, pos - 250): pos + 450]
                 near = sorted({a for p, a in EXEC_TITLES.items() if p in window})
                 if near:
                     hit_titles = near
-                pos = appoint_pos
                 quote = " ".join(text[max(0, pos - 150): pos + 250].split())
                 signals.append(Signal(
                     company_cik=cik, source="edgar", type="E3",

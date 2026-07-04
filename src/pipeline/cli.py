@@ -404,12 +404,29 @@ def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")
     console.print(f"Wrote {len(rows)} rows -> {out}")
 
 
+@app.command()
+def promote(tickers: str = typer.Argument(..., help="Comma-separated tickers to promote from the review band to qualified")):
+    """Human review-band decision: mark 'scored' companies as qualified."""
+    from pipeline import db
+
+    for t in [x.strip() for x in tickers.split(",") if x.strip()]:
+        row = db.get_company_by_ticker(t)
+        if not row:
+            console.print(f"[red]{t}: not in pipeline[/red]")
+            continue
+        if row["status"] not in ("scored", "disqualified"):
+            console.print(f"[yellow]{t}: status is '{row['status']}' — nothing to promote[/yellow]")
+            continue
+        db.set_status(row["cik"], "qualified")
+        console.print(f"{t}: scored -> qualified (human review)")
+
+
 @app.command(name="apply-schema")
 def apply_schema():
     """Apply sql/schema.sql to Supabase (needs SUPABASE_DB_URL in .env)."""
-    from pipeline.config import PROJECT_ROOT, require_env
+    from pipeline.config import PROJECT_ROOT, normalize_pg_dsn, require_env
 
-    dsn = require_env("SUPABASE_DB_URL")
+    dsn = normalize_pg_dsn(require_env("SUPABASE_DB_URL"))
     sql = (PROJECT_ROOT / "sql" / "schema.sql").read_text()
     import psycopg
 
