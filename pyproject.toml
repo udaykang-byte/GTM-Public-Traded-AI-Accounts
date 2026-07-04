@@ -1,0 +1,27 @@
+[project]
+name = "aipt-pipeline"
+version = "0.1.0"
+description = "AI-readiness signal pipeline for public micro-caps (martechs.io)"
+requires-python = ">=3.12"
+dependencies = [
+    "edgartools>=4.0",
+    "supabase>=2.6",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "yfinance>=0.2.40",
+    "typer>=0.12",
+    "rich>=13.7",
+    "psycopg[binary]>=3.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pipeline"]
+
+[tool.uv]
+package = true

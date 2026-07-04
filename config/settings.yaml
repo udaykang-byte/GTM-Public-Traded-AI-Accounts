@@ -1,0 +1,69 @@
+# Pipeline configuration — every knob the funnel uses lives here.
+
+universe:
+  exchanges: [NYSE, Nasdaq, NYSE American]   # OTC excluded by default
+  market_cap_min: 50_000_000                  # micro-cap band (USD)
+  market_cap_max: 300_000_000                 # widen here when you want small-caps too
+  # Sector buckets. A company matches a bucket if its SIC is in `sic`, or its
+  # SIC is in `generic_tech_sic` AND name/description matches a keyword.
+  generic_tech_sic: ["7372", "7371", "7370", "7389"]
+  sectors:
+    saas:
+      sic: ["7372", "7371", "7370"]
+      keywords: [software, saas, platform, cloud, application]
+    fintech:
+      sic: ["6199", "6141", "6153", "6159", "6162", "6172", "6282", "6099", "6022", "6770"]
+      keywords: [payment, fintech, lending, banking, insurtech, insurance technology, wealth, trading platform, financial software]
+    healthcare:
+      sic: ["8000", "8011", "8049", "8050", "8060", "8071", "8082", "8090", "8093", "3841", "3845", "5047"]
+      keywords: [health, medical, telehealth, care, clinical, patient, diagnostic]
+      exclude_sic: ["2834", "2836", "8731"]   # pure pharma/biotech R&D out by default
+    edtech:
+      sic: ["8200", "8221", "8249", "8299"]
+      keywords: [education, learning, edtech, training, tutoring, courseware]
+
+enrich:
+  edgar:
+    years_back: 2            # compare latest vs prior annual report for AI-mention delta
+    eightk_lookback_days: 365
+    ipo_lookback_days: 730
+  parallel:
+    processor: base          # Parallel Task API processor tier (cost control)
+    max_tasks_per_run: 25    # hard cap on Parallel task runs per enrich invocation
+    poll_timeout_seconds: 600
+
+scoring:
+  qualify_threshold: 65      # total >= this AND >=1 hard signal -> qualified
+  disqualify_below: 45       # total < this -> disqualified; between = stays 'scored' for review
+  hard_signals: [E1, E3, E4, E5, P1, P2, P3]
+  # Deterministic base weights per signal type (component caps applied in code)
+  weights:
+    E1: 15   # new/rising AI language in strategy sections
+    E2: 6    # AI only in risk factors (aware, defensive)
+    E3: 10   # new C-level exec <=12mo
+    E4: 8    # restructuring / cost program
+    E5: 8    # S&M spend rising while growth slows
+    E6: 8    # no tech leadership disclosed
+    E7: 8    # recent IPO <=24mo
+    E9: 4    # cash capacity to buy services
+    P1: 10   # AI job postings (adopter marker)
+    P2: 8    # SDR/BDR/marketing hiring
+    P3: 10   # public AI announcements/pilots
+    P4: 6    # product AI gap vs peers
+    P5: 4    # martech stack maturity
+    P6: 6    # exec AI commentary
+  component_caps:
+    intent: 30           # E1 E2 P3 P6
+    capability_gap: 25   # E6 P4 + absence-of-execution logic
+    timing: 25           # E3 E4 E7
+    commercial_fit: 20   # E5 E9 P1 P2 P5 + sector/band fit
+
+people:
+  max_companies_per_run: 10
+  always_include_roles: [CEO]
+  roles_by_service:
+    ai_lead_generation: [CMO, VP Marketing, CRO, VP Sales, Head of Growth]
+    ai_outreach: [CRO, VP Sales, Head of Sales Development, CMO]
+    ai_marketing: [CMO, VP Marketing, Head of Digital]
+    custom_ai_agents: [CTO, CIO, COO, VP Engineering]
+    ai_consultation: [CEO, CFO, COO]

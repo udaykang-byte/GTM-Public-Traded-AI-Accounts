@@ -1,0 +1,30 @@
+---
+name: people
+description: Find decision-makers (name, title, LinkedIn, public email) for qualified accounts via Parallel research. Use after /score qualifies companies, or when asked for contacts at an account.
+---
+
+# /people — decision-maker search for qualified accounts
+
+Preview which companies/roles would be searched (no spend):
+
+```bash
+uv run python -m pipeline people --dry-run
+```
+
+Run (capped by config `people.max_companies_per_run`, default 10):
+
+```bash
+uv run python -m pipeline people --limit 5
+# or a single account:
+uv run python -m pipeline people --ticker XYZ
+```
+
+How targeting works: each qualified company's latest `service_fit` picks target roles from config `people.roles_by_service` (e.g. lead-gen fit → CMO/CRO/VP Marketing; custom agents → CTO/CIO), plus `always_include_roles` (CEO — micro-caps often buy top-down). One Parallel task per company researches names, exact titles, LinkedIn URLs, and **publicly listed** emails only (source URL + confidence stored; no guessing, no pattern-inventing).
+
+After running:
+- Table per company: name, title, role bucket, LinkedIn, email (or —), confidence.
+- Companies move to `contacts_found`.
+- Flag companies where key roles came back empty (tiny micro-caps often have no CMO — the CEO is the buyer).
+- Suggest `uv run python -m pipeline export` for a CSV of qualified accounts + contacts.
+
+This is where v1 ends — no outreach message generation or sending.

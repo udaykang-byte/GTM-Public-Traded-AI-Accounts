@@ -1,0 +1,53 @@
+# martechs.io service catalog — the scorer maps each company's signals to these
+# services (service_fit). Edit freely; wording here shapes scoring rationale.
+
+services:
+  ai_lead_generation:
+    name: AI Lead Generation
+    description: >
+      AI-powered pipeline building: ICP discovery, intent-data sourcing,
+      list building and enrichment, signal-based targeting.
+    ideal_signals: [E5, P2, E7]
+    pitch_angle: >
+      Sales & marketing spend rising faster than revenue, or a post-IPO team
+      building its go-to-market motion from scratch.
+
+  ai_outreach:
+    name: AI Outreach & Sales Development
+    description: >
+      Automated multi-channel outbound — email and LinkedIn sequencing with
+      AI personalization at scale, meeting booking, reply handling.
+    ideal_signals: [P2, E5]
+    pitch_angle: >
+      Hiring SDR/BDR headcount the old way while peers automate; cost per
+      meeting can drop with AI-run outbound.
+
+  ai_marketing:
+    name: AI Marketing Automation
+    description: >
+      AI content engines, SEO at scale, campaign automation, marketing ops
+      modernization.
+    ideal_signals: [P5, E5, P4]
+    pitch_angle: >
+      Thin marketing team or immature martech stack in a category where
+      content velocity now decides visibility.
+
+  custom_ai_agents:
+    name: Custom AI Agents
+    description: >
+      Bespoke AI agents for support, operations, sales workflows, and
+      internal knowledge — built on the company's own data and systems.
+    ideal_signals: [E4, P4, E1]
+    pitch_angle: >
+      Cost-reduction mandate or stated AI ambitions with no shipped AI in the
+      product; agents deliver measurable head-count leverage fast.
+
+  ai_consultation:
+    name: AI Readiness Consultation & Implementation
+    description: >
+      Assessment, roadmap, vendor selection, and hands-on implementation
+      partnership for companies early in AI adoption.
+    ideal_signals: [E1, E2, E6, E3]
+    pitch_angle: >
+      Board/investors asking about AI (it shows up in filings) but no
+      internal owner — a credible outside partner de-risks the first step.

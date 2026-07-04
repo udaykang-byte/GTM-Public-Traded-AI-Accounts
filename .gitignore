@@ -1,0 +1,18 @@
+# secrets
+.env
+
+# data: caches, queues, exports (regenerable / local state)
+data/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+
+# local claude state
+.claude/settings.local.json
+
+# os
+.DS_Store

@@ -1,0 +1,395 @@
+"""AIPT pipeline CLI. Run via: uv run python -m pipeline <command>"""
+from __future__ import annotations
+
+import csv as csv_mod
+import json
+from pathlib import Path
+
+import typer
+from rich.console import Console
+from rich.table import Table
+
+app = typer.Typer(help="AI-readiness pipeline for public micro-caps (martechs.io)", no_args_is_help=True)
+console = Console()
+
+STATUS_ORDER = ["new", "enriched", "scored", "qualified", "disqualified", "contacts_found"]
+
+
+@app.command()
+def status(brief: bool = typer.Option(False, "--brief", help="One-line funnel summary")):
+    """Funnel counts, recent qualifications, recent runs."""
+    from pipeline import db
+
+    counts = db.status_counts()
+    if brief:
+        line = " | ".join(f"{counts.get(s, 0)} {s}" for s in STATUS_ORDER)
+        print(f"AIPT funnel: {line}")
+        return
+
+    table = Table(title="AIPT funnel")
+    table.add_column("status")
+    table.add_column("companies", justify="right")
+    for s in STATUS_ORDER:
+        table.add_row(s, str(counts.get(s, 0)))
+    console.print(table)
+
+    qualified = db.recent_qualified()
+    if qualified:
+        qt = Table(title="Recently qualified")
+        for col in ("ticker", "name", "sector", "profile", "total", "lead service"):
+            qt.add_column(col)
+        for q in qualified:
+            fits = q.get("service_fit") or []
+            lead = fits[0]["service"] if fits else "—"
+            qt.add_row(q["ticker"], q["name"][:36], q["sector_bucket"], q.get("profile") or "—",
+                       str(q.get("total") or "—"), lead)
+        console.print(qt)
+
+    runs = db.recent_runs()
+    if runs:
+        rt = Table(title="Recent runs")
+        for col in ("stage", "started", "stats"):
+            rt.add_column(col)
+        for r in runs:
+            rt.add_row(r["stage"], str(r["started_at"])[:19], json.dumps(r.get("stats") or {})[:60])
+        console.print(rt)
+
+
+@app.command()
+def ingest(
+    tickers: str = typer.Argument("", help="Comma-separated tickers, e.g. 'ABCD,EFGH'"),
+    csv: Path = typer.Option(None, "--csv", help="CSV file with a 'ticker' column"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+):
+    """Add user-provided companies to the pipeline (overrides the screen)."""
+    from pipeline import db, universe
+
+    wanted: list[str] = [t for t in tickers.split(",") if t.strip()]
+    if csv:
+        with open(csv, newline="") as fh:
+            for row in csv_mod.DictReader(fh):
+                if row.get("ticker"):
+                    wanted.append(row["ticker"])
+    if not wanted:
+        raise typer.BadParameter("Provide tickers or --csv")
+
+    console.print(f"Resolving {len(wanted)} tickers against SEC records…")
+    resolved, unresolved = universe.resolve_tickers(wanted)
+
+    table = Table(title="Resolved companies")
+    for col in ("ticker", "name", "sector", "market cap", "exchange", "note"):
+        table.add_column(col)
+    uni = __import__("pipeline.config", fromlist=["SETTINGS"]).SETTINGS.get("universe", {})
+    cap_min, cap_max = uni.get("market_cap_min", 0), uni.get("market_cap_max", 0)
+    for c in resolved:
+        note = ""
+        if c.sector_bucket.value == "other":
+            note = "outside target sectors"
+        elif c.market_cap and not (cap_min <= c.market_cap <= cap_max):
+            note = "outside cap band"
+        table.add_row(
+            c.ticker, c.name[:36], c.sector_bucket.value,
+            f"${(c.market_cap or 0)/1e6:.0f}M" if c.market_cap else "?",
+            c.exchange or "?", note,
+        )
+    console.print(table)
+    if unresolved:
+        console.print(f"[yellow]Unresolved: {', '.join(unresolved)}[/yellow]")
+
+    if dry_run:
+        console.print("[dim]dry run — nothing written[/dim]")
+        return
+    known = db.existing_ciks()
+    fresh = [c for c in resolved if c.cik not in known]
+    skipped = len(resolved) - len(fresh)
+    n = db.upsert_companies(fresh)
+    console.print(f"Ingested {n} new companies" + (f" ({skipped} already in pipeline, untouched)" if skipped else ""))
+
+
+@app.command()
+def discover(
+    limit: int = typer.Option(None, "--limit", help="Max companies to seed"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+):
+    """Screen the SEC universe: sectors + micro-cap band -> seed as 'new'."""
+    from pipeline import db, universe
+
+    skip: set[int] = set()
+    if not dry_run:
+        skip = db.existing_ciks()
+    else:
+        try:
+            skip = db.existing_ciks()
+        except SystemExit:
+            console.print("[yellow]DB not configured — screening without dedupe[/yellow]")
+
+    def progress(stage: str, done: int, total: int):
+        console.print(f"[dim]{stage}: {done}/{total}[/dim]")
+
+    run_id = None if dry_run else db.start_run("discover")
+    companies, stats = universe.screen(limit=limit, skip_ciks=skip, progress=progress)
+
+    table = Table(title="Discovery funnel")
+    table.add_column("stage")
+    table.add_column("count", justify="right")
+    for k, v in stats.items():
+        table.add_row(k, str(v))
+    console.print(table)
+
+    sample = Table(title=f"{'Would seed' if dry_run else 'Seeding'} (sample)")
+    for col in ("ticker", "name", "sector", "market cap"):
+        sample.add_column(col)
+    for c in companies[:15]:
+        sample.add_row(c.ticker, c.name[:40], c.sector_bucket.value, f"${(c.market_cap or 0)/1e6:.0f}M")
+    console.print(sample)
+
+    if dry_run:
+        console.print(f"[dim]dry run — {len(companies)} companies would be seeded[/dim]")
+        return
+    n = db.upsert_companies(companies)
+    db.finish_run(run_id, {**stats, "seeded": n})
+    console.print(f"Seeded {n} companies as 'new'")
+
+
+def _print_signals(ticker: str, signals: list, errors: list[str]):
+    table = Table(title=f"{ticker} signals")
+    for col in ("type", "w", "title", "evidence"):
+        table.add_column(col)
+    for s in sorted(signals, key=lambda x: -x.weight):
+        ev = (s.evidence_quote or s.detail or "")[:70]
+        table.add_row(s.type, str(s.weight), s.title[:55], ev)
+    console.print(table)
+    for e in errors:
+        console.print(f"[yellow]  {ticker}: {e}[/yellow]")
+
+
+@app.command()
+def enrich(
+    source: str = typer.Option("edgar", "--source", help="edgar | parallel | all"),
+    limit: int = typer.Option(10, "--limit"),
+    ticker: str = typer.Option(None, "--ticker", help="Single company (any status)"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+):
+    """Collect signals. EDGAR is free — run it before Parallel (paid)."""
+    from pipeline import db, universe
+    from pipeline.config import SETTINGS
+
+    if source not in ("edgar", "parallel", "all"):
+        raise typer.BadParameter("--source must be edgar | parallel | all")
+
+    targets: list[dict] = []
+    if ticker:
+        row = None
+        try:
+            row = db.get_company_by_ticker(ticker)
+        except SystemExit:
+            if not dry_run:
+                raise
+        if row is None:
+            console.print(f"[dim]{ticker} not in DB — resolving live from SEC[/dim]")
+            resolved, missing = universe.resolve_tickers([ticker])
+            if missing:
+                raise typer.BadParameter(f"Unknown ticker {ticker}")
+            company = resolved[0]
+            if not dry_run:
+                db.upsert_companies([company])
+            row = company.model_dump(mode="json")
+        targets = [row]
+    else:
+        targets = db.get_companies(status="new") + db.get_companies(status="enriched")
+        targets = targets[:limit]
+
+    if not targets:
+        console.print("Nothing to enrich (no companies in 'new'/'enriched').")
+        return
+
+    parallel_cap = int(SETTINGS.get("enrich", {}).get("parallel", {}).get("max_tasks_per_run", 25))
+    parallel_used = 0
+    run_id = None if dry_run else db.start_run(f"enrich:{source}")
+    stats = {"companies": 0, "signals": 0, "errors": 0}
+
+    for company in targets:
+        tick = company["ticker"]
+        all_signals, all_errors = [], []
+        if source in ("edgar", "all"):
+            from pipeline import edgar_signals
+            sigs, errs = edgar_signals.collect(company)
+            all_signals += sigs
+            all_errors += errs
+            if not dry_run:
+                db.replace_signals(company["cik"], "edgar", sigs)
+        if source in ("parallel", "all"):
+            if parallel_used >= parallel_cap:
+                console.print(f"[yellow]Parallel cap ({parallel_cap}/run) reached — skipping {tick}[/yellow]")
+            else:
+                from pipeline import parallel_signals
+                parallel_used += 1
+                sigs, errs = parallel_signals.collect(company)
+                all_signals += sigs
+                all_errors += errs
+                if not dry_run:
+                    db.replace_signals(company["cik"], "parallel", sigs)
+        _print_signals(tick, all_signals, all_errors)
+        stats["companies"] += 1
+        stats["signals"] += len(all_signals)
+        stats["errors"] += len(all_errors)
+        if not dry_run and company.get("status") in (None, "new", "enriched"):
+            db.set_status(company["cik"], "enriched")
+
+    if not dry_run:
+        db.finish_run(run_id, stats)
+    console.print(f"Done: {stats}")
+
+
+@app.command()
+def score(
+    prepare: bool = typer.Option(False, "--prepare"),
+    commit: bool = typer.Option(False, "--commit"),
+    limit: int = typer.Option(None, "--limit"),
+    provider: str = typer.Option("claude-code", "--provider", help="claude-code (v1) | openrouter (v2)"),
+):
+    """Score + qualify. v1: --prepare, then the /score skill, then --commit."""
+    from pipeline import scoring
+
+    if provider == "openrouter":
+        from pipeline.config import QUEUE_DIR, RESULTS_DIR
+        from pipeline.llm import get_provider
+
+        paths = scoring.prepare(limit=limit)
+        llm = get_provider("openrouter")
+        for p in paths:
+            packet = json.loads(Path(p).read_text())
+            verdict = llm.score_packet(packet)
+            (RESULTS_DIR / f"{packet['ticker']}.json").write_text(verdict.model_dump_json(indent=2))
+            console.print(f"scored {packet['ticker']}: {verdict.total}")
+        summary = scoring.commit()
+        console.print(json.dumps(summary, indent=2, default=str))
+        return
+
+    if prepare:
+        paths = scoring.prepare(limit=limit)
+        console.print(f"Prepared {len(paths)} scoring packets in data/scoring_queue/")
+        console.print("Next: use the /score skill (Haiku subagents), then `score --commit`.")
+        for p in paths:
+            console.print(f"  {p}")
+        return
+
+    if commit:
+        pending = scoring.pending_results()
+        if not pending:
+            console.print("No results in data/scoring_results/ — run the /score skill first.")
+            raise typer.Exit(1)
+        summary = scoring.commit()
+        for bucket in ("qualified", "review", "disqualified"):
+            items = summary[bucket]
+            console.print(f"[bold]{bucket}[/bold] ({len(items)}): " + ", ".join(
+                f"{i['ticker']}={i['total']}({i['profile']})" for i in items))
+        if summary["invalid"]:
+            console.print(f"[red]invalid results (fix + rerun): {summary['invalid']}[/red]")
+        if summary["orphan"]:
+            console.print(f"[yellow]orphan results (no packet/company): {summary['orphan']}[/yellow]")
+        return
+
+    console.print("Use --prepare or --commit (v1), or --provider openrouter (v2).")
+
+
+@app.command()
+def people(
+    limit: int = typer.Option(None, "--limit"),
+    ticker: str = typer.Option(None, "--ticker"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+):
+    """Find decision-makers for qualified accounts (Parallel research, paid)."""
+    from pipeline import db
+    from pipeline.config import SETTINGS
+    from pipeline.people import find_people, target_roles
+
+    cap = int(SETTINGS.get("people", {}).get("max_companies_per_run", 10))
+    if ticker:
+        row = db.get_company_by_ticker(ticker)
+        if not row:
+            raise typer.BadParameter(f"{ticker} not in pipeline")
+        targets = [row]
+    else:
+        targets = db.get_companies(status="qualified", limit=min(limit or cap, cap))
+
+    if not targets:
+        console.print("No qualified companies awaiting people search.")
+        return
+
+    run_id = None if dry_run else db.start_run("people")
+    found_total = 0
+    for company in targets:
+        s = db.latest_score(company["cik"])
+        fits = (s or {}).get("service_fit") or []
+        roles = target_roles(fits)
+        if dry_run:
+            console.print(f"{company['ticker']}: would search roles {roles}")
+            continue
+        try:
+            contacts, notes = find_people(company, fits)
+        except Exception as exc:
+            console.print(f"[red]{company['ticker']}: people search failed: {exc}[/red]")
+            continue
+        db.insert_contacts(contacts)
+        db.set_status(company["cik"], "contacts_found")
+        found_total += len(contacts)
+        table = Table(title=f"{company['ticker']} — {company['name'][:40]}")
+        for col in ("name", "title", "linkedin", "email", "conf"):
+            table.add_column(col)
+        for c in contacts:
+            table.add_row(c.name, c.title[:40], (c.linkedin_url or "—")[:44], c.email or "—", c.confidence)
+        console.print(table)
+        if notes:
+            console.print(f"[dim]{notes}[/dim]")
+    if not dry_run:
+        db.finish_run(run_id, {"companies": len(targets), "contacts": found_total})
+
+
+@app.command()
+def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")):
+    """CSV of qualified accounts + contacts (one row per contact)."""
+    from pipeline import db
+
+    rows = []
+    for st in ("qualified", "contacts_found"):
+        for company in db.get_companies(status=st):
+            s = db.latest_score(company["cik"]) or {}
+            fits = s.get("service_fit") or []
+            base = {
+                "ticker": company["ticker"], "company": company["name"],
+                "sector": company["sector_bucket"], "market_cap": company["market_cap"],
+                "status": company["status"], "profile": company.get("profile"),
+                "score": s.get("total"), "lead_service": fits[0]["service"] if fits else "",
+                "reasoning": (s.get("reasoning") or "")[:300],
+            }
+            contacts = db.get_contacts(company["cik"])
+            if not contacts:
+                rows.append({**base, "contact": "", "title": "", "linkedin": "", "email": ""})
+            for c in contacts:
+                rows.append({**base, "contact": c["name"], "title": c["title"],
+                             "linkedin": c.get("linkedin_url") or "", "email": c.get("email") or ""})
+    if not rows:
+        console.print("Nothing qualified yet.")
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", newline="") as fh:
+        writer = csv_mod.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    console.print(f"Wrote {len(rows)} rows -> {out}")
+
+
+@app.command(name="apply-schema")
+def apply_schema():
+    """Apply sql/schema.sql to Supabase (needs SUPABASE_DB_URL in .env)."""
+    from pipeline.config import PROJECT_ROOT, require_env
+
+    dsn = require_env("SUPABASE_DB_URL")
+    sql = (PROJECT_ROOT / "sql" / "schema.sql").read_text()
+    import psycopg
+
+    with psycopg.connect(dsn) as conn:
+        conn.execute(sql)
+        conn.commit()
+    console.print("Schema applied ✔")
