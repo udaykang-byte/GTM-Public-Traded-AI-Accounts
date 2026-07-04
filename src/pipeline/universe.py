@@ -7,6 +7,8 @@ repeats; subsequent discover runs are incremental.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from datetime import date, datetime, timedelta
 
@@ -55,10 +57,12 @@ def _sec_get(url: str) -> httpx.Response:
 
 
 def _atomic_write(path, text: str) -> None:
-    # readers must never see a half-written cache file
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text)
-    tmp.replace(path)
+    # readers must never see a half-written cache file; the tmp name must be
+    # unique per writer or concurrent crawls race each other on the rename
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
 
 
 def _read_json_cache(path) -> dict | list | None:
@@ -119,6 +123,13 @@ def get_submission_slim(cik: int) -> dict | None:
 
 # ---------- market cap (yfinance, cached) ----------
 
+class CapFetchThrottled(Exception):
+    """Yahoo Finance is rate-limiting us — stop the cap stage, resume later."""
+
+
+_YF_PACE_SECONDS = 0.6
+
+
 def _load_cap_cache() -> dict:
     if CAP_CACHE.exists():
         cached = _read_json_cache(CAP_CACHE)
@@ -130,20 +141,25 @@ def _load_cap_cache() -> dict:
 def get_market_cap(ticker: str, max_age_days: int = 7) -> float | None:
     cache = _load_cap_cache()
     entry = cache.get(ticker)
-    if entry:
+    # only trust successful lookups — a rate-limited run must not poison the
+    # cache with nulls for a week
+    if entry and entry.get("cap") is not None:
         fetched = datetime.fromisoformat(entry["at"])
         if datetime.now() - fetched < timedelta(days=max_age_days):
             return entry["cap"]
-    cap = None
     try:
         import yfinance as yf
 
+        time.sleep(_YF_PACE_SECONDS)
         info = yf.Ticker(ticker).fast_info
         cap = info["marketCap"] if "marketCap" in info else getattr(info, "market_cap", None)
-        if cap is not None:
-            cap = float(cap)
-    except Exception:
-        cap = None
+    except Exception as exc:
+        if "ratelimit" in type(exc).__name__.lower() or "too many requests" in str(exc).lower():
+            raise CapFetchThrottled(ticker) from exc
+        return None  # genuinely missing (delisted etc.) — retry next run, don't cache
+    if cap is None:
+        return None
+    cap = float(cap)
     cache[ticker] = {"cap": cap, "at": datetime.now().isoformat()}
     _atomic_write(CAP_CACHE, json.dumps(cache))
     return cap
@@ -250,8 +266,10 @@ def screen(
         "universe": len(universe),
         "listed_on_target_exchanges": len(listed),
         "already_in_db": 0,
+        "sic_failed": 0,
         "sector_matched": 0,
         "cap_checked": 0,
+        "cap_throttled_at": None,
         "in_band": 0,
     }
 
@@ -266,6 +284,7 @@ def screen(
             continue
         slim = get_submission_slim(cik)
         if slim is None:
+            stats["sic_failed"] += 1
             continue
         sector = classify_sector(slim["sic"], row.get("name", ""), slim["sic_description"])
         if sector != Sector.other:
@@ -277,7 +296,13 @@ def screen(
     for i, (row, slim) in enumerate(sector_matched):
         if progress and i % 25 == 0:
             progress("cap", i, len(sector_matched))
-        cap = get_market_cap(row["ticker"])
+        try:
+            cap = get_market_cap(row["ticker"])
+        except CapFetchThrottled:
+            # partial results are fine — successful caps are cached, the rest
+            # resume on the next run once Yahoo cools down
+            stats["cap_throttled_at"] = f"{i}/{len(sector_matched)}"
+            break
         stats["cap_checked"] += 1
         if cap is None or not (cap_min <= cap <= cap_max):
             continue
