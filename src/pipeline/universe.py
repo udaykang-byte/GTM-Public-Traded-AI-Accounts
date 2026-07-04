@@ -54,6 +54,24 @@ def _sec_get(url: str) -> httpx.Response:
     return _http_client().get(url)
 
 
+def _atomic_write(path, text: str) -> None:
+    # readers must never see a half-written cache file
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def _read_json_cache(path) -> dict | list | None:
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+
+
 # ---------- SEC company universe ----------
 
 def fetch_universe(max_age_hours: int = 24) -> list[dict]:
@@ -61,13 +79,15 @@ def fetch_universe(max_age_hours: int = 24) -> list[dict]:
     if UNIVERSE_CACHE.exists():
         age = time.time() - UNIVERSE_CACHE.stat().st_mtime
         if age < max_age_hours * 3600:
-            return json.loads(UNIVERSE_CACHE.read_text())
+            cached = _read_json_cache(UNIVERSE_CACHE)
+            if cached is not None:
+                return cached
     resp = _sec_get(TICKERS_URL)
     resp.raise_for_status()
     payload = resp.json()
     fields = payload["fields"]  # ["cik","name","ticker","exchange"]
     rows = [dict(zip(fields, row)) for row in payload["data"]]
-    UNIVERSE_CACHE.write_text(json.dumps(rows))
+    _atomic_write(UNIVERSE_CACHE, json.dumps(rows))
     return rows
 
 
@@ -75,7 +95,9 @@ def get_submission_slim(cik: int) -> dict | None:
     """SIC, description, website, HQ state for one company. Cached forever."""
     cache_file = SUBMISSIONS_CACHE / f"{cik}.json"
     if cache_file.exists():
-        return json.loads(cache_file.read_text())
+        cached = _read_json_cache(cache_file)
+        if cached is not None:
+            return cached
     try:
         resp = _sec_get(SUBMISSIONS_URL.format(cik=cik))
         if resp.status_code != 200:
@@ -91,7 +113,7 @@ def get_submission_slim(cik: int) -> dict | None:
         "state": (d.get("addresses", {}).get("business", {}) or {}).get("stateOrCountry"),
         "name": d.get("name") or "",
     }
-    cache_file.write_text(json.dumps(slim))
+    _atomic_write(cache_file, json.dumps(slim))
     return slim
 
 
@@ -99,7 +121,9 @@ def get_submission_slim(cik: int) -> dict | None:
 
 def _load_cap_cache() -> dict:
     if CAP_CACHE.exists():
-        return json.loads(CAP_CACHE.read_text())
+        cached = _read_json_cache(CAP_CACHE)
+        if isinstance(cached, dict):
+            return cached
     return {}
 
 
@@ -121,7 +145,7 @@ def get_market_cap(ticker: str, max_age_days: int = 7) -> float | None:
     except Exception:
         cap = None
     cache[ticker] = {"cap": cap, "at": datetime.now().isoformat()}
-    CAP_CACHE.write_text(json.dumps(cache))
+    _atomic_write(CAP_CACHE, json.dumps(cache))
     return cap
 
 
