@@ -36,13 +36,30 @@ PEOPLE_SCHEMA = {
 }
 
 
+def _service_key(value: str) -> str:
+    """Scorers sometimes write the display name — normalize to the catalog key."""
+    from pipeline.config import SERVICES
+
+    raw = (value or "").strip()
+    if raw in SERVICES:
+        return raw
+    low = raw.lower()
+    for key, svc in SERVICES.items():
+        if low == key.lower() or low == str(svc.get("name", "")).lower():
+            return key
+    for key, svc in SERVICES.items():
+        if str(svc.get("name", "")).lower() in low or key.replace("_", " ") in low:
+            return key
+    return raw
+
+
 def target_roles(service_fit: list[dict]) -> list[str]:
     cfg = SETTINGS.get("people", {})
     roles: list[str] = list(cfg.get("always_include_roles", ["CEO"]))
     by_service: dict = cfg.get("roles_by_service", {})
     ranked = sorted(service_fit or [], key=lambda s: s.get("priority", 9))
     for fit in ranked[:2]:  # top two services drive targeting
-        for role in by_service.get(fit.get("service", ""), []):
+        for role in by_service.get(_service_key(fit.get("service", "")), []):
             if role not in roles:
                 roles.append(role)
     return roles[:6]

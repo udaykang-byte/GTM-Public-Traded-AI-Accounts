@@ -52,6 +52,8 @@ Profile classification:
 
 service_fit: rank 1-3 services from the catalog that best match the signals, each
 with priority (1 = lead pitch) and a one-sentence rationale tied to evidence.
+The `service` field must be the catalog KEY exactly (e.g. "ai_consultation",
+"custom_ai_agents"), not the display name.
 
 reasoning: 3-6 sentences. MUST cite specific evidence from the packet (quote
 fragments, filing dates, URLs). Never invent facts not present in the packet.
