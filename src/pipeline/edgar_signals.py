@@ -57,6 +57,7 @@ EXEC_TITLES = {
     "chief digital officer": "CDO", "chief operating officer": "COO",
     "chief revenue officer": "CRO", "chief ai officer": "CAIO",
     "chief artificial intelligence officer": "CAIO",
+    "chief financial officer": "CFO",
 }
 APPOINT_WORDS = ["appoint", "named", "will serve as", "has joined", "hired", "promoted to"]
 
@@ -109,20 +110,36 @@ def _filing_url(cik: int, filing) -> str:
 
 def _filing_sections(filing) -> dict[str, str]:
     """{'strategy': Item 1 + Item 7 text, 'risk': Item 1A text, 'all': everything}."""
-    # Preferred: edgartools typed object with named sections
+    # Preferred: edgartools typed object — named sections, then item indexing
     try:
         obj = filing.obj()
-        parts = {}
+        strategy_parts: list[str] = []
         for attr in ("business", "management_discussion", "mda"):
             val = getattr(obj, attr, None)
-            if val:
-                parts.setdefault("strategy", "")
-                parts["strategy"] += "\n" + str(val)
+            if val and len(str(val)) > 200:
+                strategy_parts.append(str(val))
+        if not strategy_parts:
+            for item in ("Item 1", "Item 7"):
+                try:
+                    val = obj[item]
+                except Exception:
+                    val = None
+                if val and len(str(val)) > 200:
+                    strategy_parts.append(str(val))
+        risk_text = ""
         risk = getattr(obj, "risk_factors", None)
-        if risk:
-            parts["risk"] = str(risk)
-        if parts:
-            parts["all"] = "\n".join(parts.values())
+        if risk and len(str(risk)) > 200:
+            risk_text = str(risk)
+        else:
+            try:
+                val = obj["Item 1A"]
+                if val and len(str(val)) > 200:
+                    risk_text = str(val)
+            except Exception:
+                pass
+        if strategy_parts or risk_text:
+            parts = {"strategy": "\n".join(strategy_parts), "risk": risk_text}
+            parts["all"] = parts["strategy"] + "\n" + risk_text
             return parts
     except Exception:
         pass
@@ -155,7 +172,11 @@ def _filing_sections(filing) -> dict[str, str]:
 
 def ai_language_signals(edgar_company, company: dict) -> list[Signal]:
     cik = company["cik"]
-    filings = list(edgar_company.get_filings(form="10-K"))[:2]
+    # exact 10-K only — amendments (10-K/A) often carry just Part III items
+    filings = [
+        f for f in edgar_company.get_filings(form="10-K")
+        if str(getattr(f, "form", "")) == "10-K"
+    ][:2]
     if not filings:
         return []
     latest = filings[0]
@@ -241,7 +262,16 @@ def eightk_signals(edgar_company, company: dict) -> list[Signal]:
             ]
             is_appointment = any(w in lower for w in APPOINT_WORDS)
             if hit_titles and is_appointment:
-                pos = min(lower.find(p) for p, a in EXEC_TITLES.items() if a in hit_titles and lower.find(p) >= 0)
+                # center the quote on the appointment language, and re-derive
+                # which titles sit near it so the label matches the evidence
+                appoint_pos = min(
+                    (lower.find(w) for w in APPOINT_WORDS if w in lower), default=0
+                )
+                window = lower[max(0, appoint_pos - 200): appoint_pos + 400]
+                near = sorted({a for p, a in EXEC_TITLES.items() if p in window})
+                if near:
+                    hit_titles = near
+                pos = appoint_pos
                 quote = " ".join(text[max(0, pos - 150): pos + 250].split())
                 signals.append(Signal(
                     company_cik=cik, source="edgar", type="E3",

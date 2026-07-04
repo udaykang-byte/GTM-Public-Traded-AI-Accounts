@@ -44,7 +44,13 @@ def resolve_api_key() -> str:
         token_file = info.get("token_file")
         if info.get("authenticated") and token_file:
             stored = json.loads(open(token_file).read())
-            # scan for anything that looks like an API/service key
+            # documented layout: orgs[selected_org_id].api_key
+            org_id = stored.get("selected_org_id")
+            org = (stored.get("orgs") or {}).get(org_id) or {}
+            if org.get("api_key"):
+                _cached_key = org["api_key"]
+                return _cached_key
+            # fallback: scan for anything that looks like an API/service key
             def _find_key(node) -> str | None:
                 if isinstance(node, dict):
                     for k, v in node.items():
