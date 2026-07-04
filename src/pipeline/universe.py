@@ -25,6 +25,7 @@ CAP_CACHE = CACHE_DIR / "market_caps.json"
 
 _MIN_INTERVAL = 0.13  # ~8 req/s, under SEC's 10/s ceiling
 _last_request = 0.0
+_http: httpx.Client | None = None
 
 
 def _throttle() -> None:
@@ -35,10 +36,22 @@ def _throttle() -> None:
     _last_request = time.monotonic()
 
 
+def _http_client() -> httpx.Client:
+    # persistent client: keep-alive matters — a fresh TLS handshake per
+    # request makes the universe crawl ~5x slower
+    global _http
+    if _http is None:
+        _http = httpx.Client(
+            headers={"User-Agent": edgar_identity(), "Accept-Encoding": "gzip"},
+            timeout=30,
+            follow_redirects=True,
+        )
+    return _http
+
+
 def _sec_get(url: str) -> httpx.Response:
     _throttle()
-    headers = {"User-Agent": edgar_identity(), "Accept-Encoding": "gzip"}
-    return httpx.get(url, headers=headers, timeout=30, follow_redirects=True)
+    return _http_client().get(url)
 
 
 # ---------- SEC company universe ----------
