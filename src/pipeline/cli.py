@@ -20,7 +20,17 @@ def status(brief: bool = typer.Option(False, "--brief", help="One-line funnel su
     """Funnel counts, recent qualifications, recent runs."""
     from pipeline import db
 
-    counts = db.status_counts()
+    try:
+        counts = db.status_counts()
+    except Exception as exc:
+        if "PGRST205" in str(exc):
+            print(
+                "AIPT: Supabase schema not applied yet — run "
+                "`uv run python -m pipeline apply-schema` (needs SUPABASE_DB_URL) "
+                "or paste sql/schema.sql into the Supabase SQL editor."
+            )
+            raise typer.Exit(1)
+        raise
     if brief:
         line = " | ".join(f"{counts.get(s, 0)} {s}" for s in STATUS_ORDER)
         print(f"AIPT funnel: {line}")
@@ -120,8 +130,8 @@ def discover(
     else:
         try:
             skip = db.existing_ciks()
-        except SystemExit:
-            console.print("[yellow]DB not configured — screening without dedupe[/yellow]")
+        except (SystemExit, Exception):
+            console.print("[yellow]DB not ready — screening without dedupe[/yellow]")
 
     def progress(stage: str, done: int, total: int):
         console.print(f"[dim]{stage}: {done}/{total}[/dim]")
@@ -169,6 +179,7 @@ def enrich(
     limit: int = typer.Option(10, "--limit"),
     ticker: str = typer.Option(None, "--ticker", help="Single company (any status)"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    force: bool = typer.Option(False, "--force", help="Re-enrich even if already enriched / has parallel signals"),
 ):
     """Collect signals. EDGAR is free — run it before Parallel (paid)."""
     from pipeline import db, universe
@@ -196,7 +207,20 @@ def enrich(
             row = company.model_dump(mode="json")
         targets = [row]
     else:
-        targets = db.get_companies(status="new") + db.get_companies(status="enriched")
+        if source == "parallel":
+            # parallel runs after edgar; never re-spend on companies that
+            # already have parallel signals unless --force
+            pool = db.get_companies(status="new") + db.get_companies(status="enriched")
+            if not force:
+                pool = [
+                    c for c in pool
+                    if not any(s["source"] == "parallel" for s in db.get_signals(c["cik"]))
+                ]
+            targets = pool
+        else:
+            targets = db.get_companies(status="new")
+            if force:
+                targets += db.get_companies(status="enriched")
         targets = targets[:limit]
 
     if not targets:
