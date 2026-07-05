@@ -237,6 +237,22 @@ def ai_language_signals(edgar_company, company: dict) -> list[Signal]:
 
 # ---------- E3/E4: 8-K events ----------
 
+ITEM_NUM = re.compile(r"\d+\.\d+")
+
+
+def _filing_items(filing) -> set[str]:
+    """Item numbers (e.g. {'5.02'}) from filing-index metadata — no document download."""
+    raw = getattr(filing, "items", None)
+    if raw is None:
+        return set()
+    if isinstance(raw, str):
+        return set(ITEM_NUM.findall(raw))
+    try:
+        return {m for part in raw for m in ITEM_NUM.findall(str(part))}
+    except TypeError:
+        return set()
+
+
 def eightk_signals(edgar_company, company: dict) -> list[Signal]:
     cik = company["cik"]
     lookback = int(SETTINGS.get("enrich", {}).get("edgar", {}).get("eightk_lookback_days", 365))
@@ -248,6 +264,13 @@ def eightk_signals(edgar_company, company: dict) -> list[Signal]:
         fdate = getattr(filing, "filing_date", None)
         if fdate is None or fdate < cutoff:
             break  # filings are newest-first
+        items = _filing_items(filing)
+        # strict item filter (spec decision): 5.02 = exec change, 2.05 =
+        # restructuring charge. Only these are worth a document download.
+        want_e3 = "E3" not in seen_types and "5.02" in items
+        want_e4 = "E4" not in seen_types and "2.05" in items
+        if not (want_e3 or want_e4):
+            continue
         try:
             text = filing.text()
         except Exception:
@@ -256,7 +279,7 @@ def eightk_signals(edgar_company, company: dict) -> list[Signal]:
             continue
         lower = text.lower()
 
-        if "E3" not in seen_types and ("item 5.02" in lower or "5.02" in lower):
+        if want_e3:
             hit_titles = [
                 abbrev for phrase, abbrev in EXEC_TITLES.items() if phrase in lower
             ]
@@ -289,19 +312,18 @@ def eightk_signals(edgar_company, company: dict) -> list[Signal]:
                 ))
                 seen_types.add("E3")
 
-        if "E4" not in seen_types:
+        if want_e4:
             phrase_hit = next((p for p in RESTRUCTURING_PHRASES if p in lower), None)
-            if "item 2.05" in lower or phrase_hit:
-                pos = lower.find("item 2.05") if "item 2.05" in lower else lower.find(phrase_hit)
-                quote = " ".join(text[max(0, pos - 100): pos + 300].split())
-                signals.append(Signal(
-                    company_cik=cik, source="edgar", type="E4",
-                    title="Restructuring / cost-reduction program announced",
-                    detail=f"8-K filed {fdate}" + (f' ("{phrase_hit}")' if phrase_hit else " (Item 2.05)"),
-                    evidence_url=_filing_url(cik, filing), evidence_quote=quote,
-                    observed_at=fdate, weight=_w("E4"), raw={},
-                ))
-                seen_types.add("E4")
+            pos = lower.find(phrase_hit) if phrase_hit else max(lower.find("item 2.05"), 0)
+            quote = " ".join(text[max(0, pos - 100): pos + 300].split())
+            signals.append(Signal(
+                company_cik=cik, source="edgar", type="E4",
+                title="Restructuring / cost-reduction program announced",
+                detail=f"8-K Item 2.05 filed {fdate}" + (f' ("{phrase_hit}")' if phrase_hit else ""),
+                evidence_url=_filing_url(cik, filing), evidence_quote=quote,
+                observed_at=fdate, weight=_w("E4"), raw={},
+            ))
+            seen_types.add("E4")
 
         if {"E3", "E4"} <= seen_types:
             break
