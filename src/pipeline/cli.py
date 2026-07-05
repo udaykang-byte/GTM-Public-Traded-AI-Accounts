@@ -421,6 +421,30 @@ def promote(tickers: str = typer.Argument(..., help="Comma-separated tickers to 
         console.print(f"{t}: scored -> qualified (human review)")
 
 
+@app.command()
+def prune(dry_run: bool = typer.Option(False, "--dry-run", help="List what would be removed without deleting")):
+    """Remove status-'new' companies the current screen no longer includes (universe corrections)."""
+    from pipeline import db, universe
+
+    keep = {c.cik for c in universe.screen()[0]}
+    stale = [r for r in db.get_companies(status="new") if int(r["cik"]) not in keep]
+    if not stale:
+        console.print("Nothing to prune — all 'new' companies still pass the screen.")
+        return
+    table = Table(title=f"{'Would prune' if dry_run else 'Pruning'} {len(stale)} companies")
+    for col in ("ticker", "name", "sic", "sector"):
+        table.add_column(col)
+    for r in stale[:20]:
+        table.add_row(r["ticker"], (r["name"] or "")[:45], r.get("sic") or "", r.get("sector_bucket") or "")
+    if len(stale) > 20:
+        table.add_row("…", f"+ {len(stale) - 20} more", "", "")
+    console.print(table)
+    if dry_run:
+        return
+    n = db.delete_new_companies([int(r["cik"]) for r in stale])
+    console.print(f"Pruned {n} companies (status was 'new')")
+
+
 @app.command(name="apply-schema")
 def apply_schema():
     """Apply sql/schema.sql to Supabase (needs SUPABASE_DB_URL in .env)."""

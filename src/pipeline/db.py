@@ -60,6 +60,20 @@ def existing_ciks() -> set[int]:
     return {r["cik"] for r in rows}
 
 
+def delete_new_companies(ciks: list[int]) -> int:
+    """Universe corrections only: drop rows that are still status 'new'."""
+    if not ciks:
+        return 0
+    deleted = 0
+    for i in range(0, len(ciks), 100):
+        res = (
+            client().table("companies").delete()
+            .eq("status", "new").in_("cik", ciks[i : i + 100]).execute()
+        )
+        deleted += len(res.data or [])
+    return deleted
+
+
 def set_status(cik: int, status: Status | str, profile: str | None = None) -> None:
     patch: dict = {"status": status.value if isinstance(status, Status) else status}
     if profile is not None:

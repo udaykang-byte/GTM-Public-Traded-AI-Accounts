@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import time
 from datetime import date, datetime, timedelta
 
 import httpx
 
-from pipeline.config import CACHE_DIR, SETTINGS, edgar_identity
+from pipeline.config import CACHE_DIR, SETTINGS, edgar_identity, env
 from pipeline.models import Company, Sector
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
@@ -138,7 +139,38 @@ def _load_cap_cache() -> dict:
     return {}
 
 
-def get_market_cap(ticker: str, max_age_days: int = 7) -> float | None:
+# Google Finance via SerpAPI: fallback cap source while Yahoo rate-limits us.
+_GF_EXCHANGES = {"nyse": "NYSE", "nasdaq": "NASDAQ", "nyse american": "NYSEAMERICAN"}
+_CAP_SUFFIXES = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
+
+
+def _parse_cap_text(text: str) -> float | None:
+    m = re.match(r"([\d.]+)\s*([KMBT])", text.strip())
+    return float(m.group(1)) * _CAP_SUFFIXES[m.group(2)] if m else None
+
+
+def _serpapi_market_cap(ticker: str, exchange: str | None) -> float | None:
+    api_key = env("SERPAPI_API_KEY")
+    if not api_key:
+        return None
+    gf_ex = _GF_EXCHANGES.get((exchange or "").lower())
+    q = f"{ticker}:{gf_ex}" if gf_ex else ticker
+    try:
+        resp = httpx.get(
+            "https://serpapi.com/search.json",
+            params={"engine": "google_finance", "q": q, "api_key": api_key},
+            timeout=30,
+        )
+        stats = resp.json().get("knowledge_graph", {}).get("key_stats", {}).get("stats", [])
+    except Exception:
+        return None
+    for stat in stats:
+        if stat.get("label", "").lower() in ("mkt. cap", "market cap"):
+            return _parse_cap_text(stat.get("value") or "")
+    return None
+
+
+def get_market_cap(ticker: str, max_age_days: int = 7, exchange: str | None = None) -> float | None:
     cache = _load_cap_cache()
     entry = cache.get(ticker)
     # only trust successful lookups — a rate-limited run must not poison the
@@ -155,8 +187,11 @@ def get_market_cap(ticker: str, max_age_days: int = 7) -> float | None:
         cap = info["marketCap"] if "marketCap" in info else getattr(info, "market_cap", None)
     except Exception as exc:
         if "ratelimit" in type(exc).__name__.lower() or "too many requests" in str(exc).lower():
-            raise CapFetchThrottled(ticker) from exc
-        return None  # genuinely missing (delisted etc.) — retry next run, don't cache
+            cap = _serpapi_market_cap(ticker, exchange)
+            if cap is None:
+                raise CapFetchThrottled(ticker) from exc
+        else:
+            return None  # genuinely missing (delisted etc.) — retry next run, don't cache
     if cap is None:
         return None
     cap = float(cap)
@@ -209,7 +244,7 @@ def build_company(uni_row: dict, with_cap: bool = True) -> Company | None:
     if slim is None:
         return None
     sector = classify_sector(slim["sic"], uni_row.get("name", ""), slim["sic_description"])
-    cap = get_market_cap(uni_row["ticker"]) if with_cap else None
+    cap = get_market_cap(uni_row["ticker"], exchange=uni_row.get("exchange")) if with_cap else None
     return Company(
         cik=cik,
         ticker=str(uni_row["ticker"]).upper(),
@@ -257,6 +292,7 @@ def screen(
     uni = SETTINGS.get("universe", {})
     cap_min = float(uni.get("market_cap_min", 50_000_000))
     cap_max = float(uni.get("market_cap_max", 300_000_000))
+    exclude_names = [str(p).lower() for p in uni.get("exclude_name_patterns", [])]
     skip_ciks = skip_ciks or set()
 
     universe = fetch_universe()
@@ -267,6 +303,7 @@ def screen(
         "listed_on_target_exchanges": len(listed),
         "already_in_db": 0,
         "sic_failed": 0,
+        "name_excluded": 0,
         "sector_matched": 0,
         "cap_checked": 0,
         "cap_throttled_at": None,
@@ -275,6 +312,7 @@ def screen(
 
     # Stage 1: SIC + sector (cached crawl)
     sector_matched: list[tuple[dict, dict]] = []
+    seen_ciks: set[int] = set()  # dual-class listings: one row per company
     for i, row in enumerate(listed):
         if progress and i % 200 == 0:
             progress("sic", i, len(listed))
@@ -282,9 +320,16 @@ def screen(
         if cik in skip_ciks:
             stats["already_in_db"] += 1
             continue
+        if cik in seen_ciks:
+            continue
+        seen_ciks.add(cik)
         slim = get_submission_slim(cik)
         if slim is None:
             stats["sic_failed"] += 1
+            continue
+        name = (row.get("name") or slim["name"] or "").lower()
+        if any(p in name for p in exclude_names):
+            stats["name_excluded"] += 1
             continue
         sector = classify_sector(slim["sic"], row.get("name", ""), slim["sic_description"])
         if sector != Sector.other:
@@ -297,7 +342,7 @@ def screen(
         if progress and i % 25 == 0:
             progress("cap", i, len(sector_matched))
         try:
-            cap = get_market_cap(row["ticker"])
+            cap = get_market_cap(row["ticker"], exchange=row.get("exchange"))
         except CapFetchThrottled:
             # partial results are fine — successful caps are cached, the rest
             # resume on the next run once Yahoo cools down

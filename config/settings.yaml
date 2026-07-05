@@ -7,12 +7,15 @@ universe:
   # Sector buckets. A company matches a bucket if its SIC is in `sic`, or its
   # SIC is in `generic_tech_sic` AND name/description matches a keyword.
   generic_tech_sic: ["7372", "7371", "7370", "7389"]
+  # Shells that carry an operating SIC still slip through — catch them by name.
+  exclude_name_patterns: [acquisition corp, acquisition co, merger corp, blank check]
   sectors:
     saas:
       sic: ["7372", "7371", "7370"]
       keywords: [software, saas, platform, cloud, application]
     fintech:
-      sic: ["6199", "6141", "6153", "6159", "6162", "6172", "6282", "6099", "6022", "6770"]
+      # 6770 (blank checks) excluded 2026-07-05: SPAC shells, not operating fintechs
+      sic: ["6199", "6141", "6153", "6159", "6162", "6172", "6282", "6099", "6022"]
       keywords: [payment, fintech, lending, banking, insurtech, insurance technology, wealth, trading platform, financial software]
     healthcare:
       sic: ["8000", "8011", "8049", "8050", "8060", "8071", "8082", "8090", "8093", "3841", "3845", "5047"]
