@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pipeline.config import SETTINGS
 from pipeline.models import Contact
-from pipeline.parallel_client import run_task
+from pipeline.parallel_client import run_task, run_tasks_batch
 
 PEOPLE_SCHEMA = {
     "type": "object",
@@ -65,10 +65,9 @@ def target_roles(service_fit: list[dict]) -> list[str]:
     return roles[:6]
 
 
-def find_people(company: dict, service_fit: list[dict]) -> tuple[list[Contact], str]:
-    roles = target_roles(service_fit)
+def _people_input_text(company: dict, roles: list[str]) -> str:
     website = f" (website: {company['website']})" if company.get("website") else ""
-    input_text = (
+    return (
         f"Find the current executives of {company['name']} (US-listed, ticker "
         f"{company['ticker']}){website}. Target roles, in priority order: "
         f"{', '.join(roles)}. For each person found: full name, exact current title, "
@@ -78,13 +77,9 @@ def find_people(company: dict, service_fit: list[dict]) -> tuple[list[Contact], 
         "left or was recently appointed. Small companies may not have all these roles; "
         "report only people you can verify."
     )
-    cfg = SETTINGS.get("enrich", {}).get("parallel", {})
-    result = run_task(
-        input_text, PEOPLE_SCHEMA,
-        processor=cfg.get("processor", "base"),
-        timeout_s=int(cfg.get("poll_timeout_seconds", 600)),
-    )
-    content = result["content"]
+
+
+def _contacts_from_result(company: dict, roles: list[str], content: dict) -> tuple[list[Contact], str]:
     contacts: list[Contact] = []
     for p in content.get("people", []):
         name = (p.get("name") or "").strip()
@@ -105,3 +100,38 @@ def find_people(company: dict, service_fit: list[dict]) -> tuple[list[Contact], 
             evidence={"source_urls": p.get("source_urls", [])},
         ))
     return contacts, content.get("notes", "")
+
+
+def find_people(company: dict, service_fit: list[dict]) -> tuple[list[Contact], str]:
+    roles = target_roles(service_fit)
+    cfg = SETTINGS.get("enrich", {}).get("parallel", {})
+    result = run_task(
+        _people_input_text(company, roles), PEOPLE_SCHEMA,
+        processor=cfg.get("processor", "base"),
+        timeout_s=int(cfg.get("poll_timeout_seconds", 600)),
+    )
+    return _contacts_from_result(company, roles, result["content"])
+
+
+def find_people_batch(items: list[tuple[dict, list[dict]]]) -> list[tuple[list[Contact], str] | Exception]:
+    """items = [(company, service_fit), ...] — one Parallel task each, polled together."""
+    if not items:
+        return []
+    cfg = SETTINGS.get("enrich", {}).get("parallel", {})
+    roles_per = [target_roles(fits) for _, fits in items]
+    results = run_tasks_batch(
+        [(_people_input_text(c, roles), PEOPLE_SCHEMA)
+         for (c, _), roles in zip(items, roles_per)],
+        processor=cfg.get("processor", "base"),
+        timeout_s=int(cfg.get("poll_timeout_seconds", 600)),
+    )
+    out: list = []
+    for (company, _), roles, result in zip(items, roles_per, results):
+        if isinstance(result, Exception):
+            out.append(result)
+        else:
+            try:
+                out.append(_contacts_from_result(company, roles, result["content"]))
+            except Exception as exc:
+                out.append(exc)
+    return out
