@@ -153,6 +153,19 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
         companies = companies[:limit]
 
     schema = ScoreVerdict.model_json_schema()
+    shared_path = QUEUE_DIR / "_shared.json"
+    shared_path.write_text(json.dumps({
+        "services_catalog": SERVICES,
+        "rubric": RUBRIC,
+        "output_schema": schema,
+        "instructions": (
+            "This file is identical for every packet in the queue — read it ONCE. "
+            "For each packet: score the company against `rubric` using "
+            "`services_catalog`, and write a verdict JSON matching `output_schema` "
+            "EXACTLY to the packet's `output_path`."
+        ),
+    }, indent=2, default=str))
+
     peers = db.get_companies()
     signals_by_cik = db.all_signals()
     written: list[str] = []
@@ -168,6 +181,7 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
         derived = _derived_cohort_signal(company, slim_signals, peers, signals_by_cik)
         if derived:
             slim_signals.append(derived)
+        output_path = (RESULTS_DIR / (company["ticker"] + ".json")).as_posix()
         packet = {
             "ticker": company["ticker"],
             "company": {
@@ -180,14 +194,15 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
                 {s["type"] for s in slim_signals}
                 & set(SETTINGS.get("scoring", {}).get("hard_signals", []))
             ),
-            "services_catalog": SERVICES,
-            "rubric": RUBRIC,
-            "output_schema": schema,
+            "shared_file": shared_path.as_posix(),
+            "output_path": output_path,
             "instructions": (
-                f"Write your verdict as JSON matching output_schema EXACTLY to: "
-                f"{(RESULTS_DIR / (company['ticker'] + '.json')).as_posix()} . "
-                "Component scores are integers within their maximums. reasoning must cite "
-                "packet evidence. Do not add fields. Do not wrap in markdown."
+                f"First read {shared_path.as_posix()} ONCE per batch — it holds the "
+                f"rubric, services_catalog, and output_schema shared by every packet. "
+                f"Then write your verdict as JSON matching output_schema EXACTLY to: "
+                f"{output_path} . Component scores are integers within their maximums. "
+                "reasoning must cite packet evidence. Do not add fields. Do not wrap "
+                "in markdown."
             ),
         }
         path = QUEUE_DIR / f"{company['ticker']}.json"
@@ -207,6 +222,10 @@ def commit(run_id: str | None = None) -> dict:
     summary = {"qualified": [], "review": [], "disqualified": [], "invalid": [], "orphan": []}
     archive = ARCHIVE_DIR / run_id
     archive.mkdir(parents=True, exist_ok=True)
+
+    shared_path = QUEUE_DIR / "_shared.json"
+    if shared_path.exists():
+        shutil.copy2(shared_path, archive / "_shared.json")
 
     for result_file in sorted(RESULTS_DIR.glob("*.json")):
         ticker = result_file.stem.upper()
@@ -260,11 +279,14 @@ def commit(run_id: str | None = None) -> dict:
         shutil.move(str(result_file), archive / result_file.name)
         shutil.move(str(packet_file), archive / f"packet_{ticker}.json")
 
+    if shared_path.exists() and not pending_queue():
+        shared_path.unlink()  # queue fully drained — next prepare rewrites it
+
     return summary
 
 
 def pending_queue() -> list[Path]:
-    return sorted(QUEUE_DIR.glob("*.json"))
+    return sorted(p for p in QUEUE_DIR.glob("*.json") if not p.name.startswith("_"))
 
 
 def pending_results() -> list[Path]:
