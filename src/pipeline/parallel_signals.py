@@ -9,7 +9,7 @@ from datetime import date
 
 from pipeline.config import SETTINGS
 from pipeline.models import Signal
-from pipeline.parallel_client import run_task
+from pipeline.parallel_client import run_task, run_tasks_batch
 
 
 def _w(sig_type: str) -> float:
@@ -87,19 +87,8 @@ def _input_text(company: dict) -> str:
     )
 
 
-def collect(company: dict) -> tuple[list[Signal], list[str]]:
-    """One Parallel task run -> P1-P6 signals for one company."""
-    cfg = SETTINGS.get("enrich", {}).get("parallel", {})
-    try:
-        result = run_task(
-            _input_text(company),
-            ENRICH_SCHEMA,
-            processor=cfg.get("processor", "base"),
-            timeout_s=int(cfg.get("poll_timeout_seconds", 600)),
-        )
-    except Exception as exc:
-        return [], [f"parallel task failed: {type(exc).__name__}: {exc}"]
-
+def _signals_from_result(company: dict, result: dict) -> list[Signal]:
+    """Map one Parallel structured result onto P1-P6 Signal rows."""
     content = result["content"]
     basis_urls = []
     for b in result.get("basis", []):
@@ -129,4 +118,38 @@ def collect(company: dict) -> tuple[list[Signal], list[str]]:
             evidence_quote=quote, observed_at=today,
             weight=_w(sig_type), raw=data,
         ))
-    return signals, []
+    return signals
+
+
+def collect(company: dict) -> tuple[list[Signal], list[str]]:
+    """One Parallel task run -> P1-P6 signals for one company."""
+    cfg = SETTINGS.get("enrich", {}).get("parallel", {})
+    try:
+        result = run_task(
+            _input_text(company),
+            ENRICH_SCHEMA,
+            processor=cfg.get("processor", "base"),
+            timeout_s=int(cfg.get("poll_timeout_seconds", 600)),
+        )
+    except Exception as exc:
+        return [], [f"parallel task failed: {type(exc).__name__}: {exc}"]
+    return _signals_from_result(company, result), []
+
+
+def collect_batch(companies: list[dict]) -> dict[int, tuple[list[Signal], list[str]]]:
+    """One Parallel task per company — created up front, polled together."""
+    if not companies:
+        return {}
+    cfg = SETTINGS.get("enrich", {}).get("parallel", {})
+    results = run_tasks_batch(
+        [(_input_text(c), ENRICH_SCHEMA) for c in companies],
+        processor=cfg.get("processor", "base"),
+        timeout_s=int(cfg.get("poll_timeout_seconds", 600)),
+    )
+    out: dict[int, tuple[list[Signal], list[str]]] = {}
+    for company, result in zip(companies, results):
+        if isinstance(result, Exception):
+            out[int(company["cik"])] = ([], [f"parallel task failed: {type(result).__name__}: {result}"])
+        else:
+            out[int(company["cik"])] = (_signals_from_result(company, result), [])
+    return out
