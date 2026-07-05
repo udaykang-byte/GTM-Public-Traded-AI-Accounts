@@ -151,5 +151,8 @@ def collect_batch(companies: list[dict]) -> dict[int, tuple[list[Signal], list[s
         if isinstance(result, Exception):
             out[int(company["cik"])] = ([], [f"parallel task failed: {type(result).__name__}: {result}"])
         else:
-            out[int(company["cik"])] = (_signals_from_result(company, result), [])
+            try:
+                out[int(company["cik"])] = (_signals_from_result(company, result), [])
+            except Exception as exc:
+                out[int(company["cik"])] = ([], [f"parallel result parse failed: {type(exc).__name__}: {exc}"])
     return out

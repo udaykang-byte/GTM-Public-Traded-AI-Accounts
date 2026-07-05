@@ -38,5 +38,18 @@ def test_collect_batch_isolates_failures(monkeypatch):
     assert sigs == [] and "TimeoutError" in errs[0]
 
 
+def test_collect_batch_isolates_parse_failures(monkeypatch):
+    ok = _result({"ai_announcements": {"found": True, "summary": "launched AI pilot"}})
+    monkeypatch.setattr(ps, "run_tasks_batch",
+                        lambda tasks, processor="base", timeout_s=600: [{}, ok])
+    other = dict(COMPANY, cik=456, ticker="OTH")
+
+    out = ps.collect_batch([COMPANY, other])
+
+    sigs, errs = out[123]
+    assert sigs == [] and "parse failed" in errs[0]
+    assert [s.type for s in out[456][0]] == ["P3"]
+
+
 def test_collect_batch_empty_input():
     assert ps.collect_batch([]) == {}
