@@ -57,12 +57,15 @@ create table if not exists scores (
   profile         text,
   service_fit     jsonb not null default '[]'::jsonb,
   reasoning       text not null default '',
+  why_now         text not null default '',
   evidence_cited  jsonb not null default '[]'::jsonb,
   confidence      text default 'medium',
   model           text,
   created_at      timestamptz not null default now()
 );
 create index if not exists scores_company_idx on scores (company_cik);
+-- migration for pre-existing installs (create-if-not-exists won't add columns)
+alter table scores add column if not exists why_now text not null default '';
 
 create table if not exists contacts (
   id           bigint generated always as identity primary key,

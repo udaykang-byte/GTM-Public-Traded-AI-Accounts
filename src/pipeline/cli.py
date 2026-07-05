@@ -385,6 +385,7 @@ def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")
                 "sector": company["sector_bucket"], "market_cap": company["market_cap"],
                 "status": company["status"], "profile": company.get("profile"),
                 "score": s.get("total"), "lead_service": fits[0]["service"] if fits else "",
+                "why_now": (s.get("why_now") or "")[:300],
                 "reasoning": (s.get("reasoning") or "")[:300],
             }
             contacts = db.get_contacts(company["cik"])

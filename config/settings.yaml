@@ -37,8 +37,13 @@ enrich:
 
 scoring:
   qualify_threshold: 65      # total >= this AND >=1 hard signal -> qualified
-  disqualify_below: 45       # total < this -> disqualified; between = stays 'scored' for review
+  disqualify_below: 45      # total < this -> disqualified; between = stays 'scored' for review
   hard_signals: [E1, E3, E4, E5, P1, P2, P3]
+  # Dated event signals (E3/E4/E7/P3) keep full weight for `full_days`, then
+  # decay linearly to `floor` x weight at their collection-window edge.
+  recency:
+    full_days: 90
+    floor: 0.25
   # Deterministic base weights per signal type (component caps applied in code)
   weights:
     E1: 15   # new/rising AI language in strategy sections

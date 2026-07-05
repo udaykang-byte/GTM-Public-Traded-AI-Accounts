@@ -78,6 +78,7 @@ class ScoreVerdict(BaseModel):
     profile: Profile
     service_fit: list[ServiceFit]
     reasoning: str = Field(description="Cited reasoning; must reference packet evidence")
+    why_now: str = Field(description="Outreach thesis: freshest dated evidence + the window it opens, or an explicit 'no fresh timing' statement")
     evidence_cited: list[str] = Field(default_factory=list)
     confidence: str = "medium"  # low | medium | high
 

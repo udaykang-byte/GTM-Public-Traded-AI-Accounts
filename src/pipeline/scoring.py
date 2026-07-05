@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import shutil
 import time
+from datetime import date, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -19,6 +20,37 @@ from pydantic import ValidationError
 from pipeline import db
 from pipeline.config import ARCHIVE_DIR, QUEUE_DIR, RESULTS_DIR, SERVICES, SETTINGS
 from pipeline.models import ScoreVerdict, Status
+
+# dated event signals lose relevance: full weight while fresh, linear decay to
+# a floor at the collection-window edge (knobs in config scoring.recency)
+DECAY_WINDOW_DAYS = {"E3": 365, "E4": 365, "E7": 730, "P3": 548}
+
+
+def _signal_age_days(s: dict) -> int | None:
+    observed = s.get("observed_at")
+    if not observed:
+        return None
+    try:
+        d = datetime.fromisoformat(str(observed)).date() if "T" in str(observed) else date.fromisoformat(str(observed)[:10])
+    except ValueError:
+        return None
+    return max((date.today() - d).days, 0)
+
+
+def effective_weight(s: dict) -> float:
+    weight = float(s.get("weight") or 0)
+    window = DECAY_WINDOW_DAYS.get(s.get("type", ""))
+    age = _signal_age_days(s)
+    if window is None or age is None:
+        return weight
+    rec = SETTINGS.get("scoring", {}).get("recency", {})
+    full = int(rec.get("full_days", 90))
+    floor = float(rec.get("floor", 0.25))
+    if age <= full:
+        return weight
+    frac = min((age - full) / max(window - full, 1), 1.0)
+    return round(weight * (1.0 - frac * (1.0 - floor)), 2)
+
 
 # which component each signal type feeds (caps in config scoring.component_caps)
 COMPONENT_OF = {
@@ -37,8 +69,11 @@ Components (respect the max for each):
 - capability_gap (0-25): how much they LACK internal AI capability — no tech
   leadership, no AI hires, no AI in product. A company with AI engineers and
   shipped AI features has a small gap.
-- timing (0-25): open buying window — new executive (<=12mo), restructuring/cost
-  mandate, recent IPO. Fresh events score higher.
+- timing (0-25): open buying window — new executive, restructuring/cost mandate,
+  recent IPO. RECENCY IS THE POINT: every dated signal carries age_days and a
+  pre-decayed effective_weight — score from those, not the raw weight. An event
+  ≤90 days old is a hot window; 6 months is cooling; if the newest dated event
+  is >180 days old, timing must be ≤8.
 - commercial_fit (0-20): would they buy outside services — GTM inefficiency
   (S&M rising, growth slowing), cash to spend, hiring in sales/marketing,
   right size/sector for a services engagement.
@@ -59,6 +94,12 @@ reasoning: 3-6 sentences. MUST cite specific evidence from the packet (quote
 fragments, filing dates, URLs). Never invent facts not present in the packet.
 The base_score is deterministic signal math — you may deviate from it when the
 evidence justifies it, and should explain when you do.
+
+why_now: 1-3 sentences — the outreach thesis. Name the FRESHEST dated evidence
+(signal type + date + what it says) and the concrete window it opens ("CFO
+appointed 2026-05-12 — first-100-days agenda"). If no dated evidence is under
+180 days old, say exactly that ("no fresh timing event; thesis rests on
+structural gap X") — do not manufacture urgency.
 """
 
 
@@ -68,7 +109,7 @@ def base_components(signals: list[dict]) -> dict:
     for s in signals:
         comp = COMPONENT_OF.get(s["type"])
         if comp:
-            totals[comp] += float(s.get("weight") or 0)
+            totals[comp] += effective_weight(s)
     for comp, cap in caps.items():
         if comp in totals:
             totals[comp] = min(totals[comp], float(cap))
@@ -125,6 +166,9 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
             {k: s.get(k) for k in ("type", "source", "title", "detail", "evidence_url", "evidence_quote", "observed_at", "weight")}
             for s in signals
         ]
+        for s in slim_signals:
+            s["age_days"] = _signal_age_days(s)
+            s["effective_weight"] = effective_weight(s)
         derived = _derived_cohort_signal(company, slim_signals)
         if derived:
             slim_signals.append(derived)
@@ -202,6 +246,7 @@ def commit(run_id: str | None = None) -> dict:
             "profile": verdict.profile.value,
             "service_fit": [sf.model_dump() for sf in verdict.service_fit],
             "reasoning": verdict.reasoning,
+            "why_now": verdict.why_now,
             "evidence_cited": verdict.evidence_cited,
             "confidence": verdict.confidence,
             "model": "claude-code/haiku-subagent",
