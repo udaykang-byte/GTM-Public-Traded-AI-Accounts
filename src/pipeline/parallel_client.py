@@ -100,21 +100,13 @@ def create_task_run(input_text: str, output_schema: dict, processor: str = "base
     return resp.json()["run_id"]
 
 
-def wait_for_result(run_id: str, timeout_s: int = 600, poll_s: float = 5.0) -> dict:
-    """Poll until the run finishes; return the parsed structured output."""
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        resp = httpx.get(f"{API_BASE}/v1/tasks/runs/{run_id}", headers=_headers(), timeout=30)
-        resp.raise_for_status()
-        status = resp.json().get("status")
-        if status in ("completed", "failed", "cancelled"):
-            break
-        time.sleep(poll_s)
-    else:
-        raise TimeoutError(f"Parallel task {run_id} did not finish in {timeout_s}s")
-    if status != "completed":
-        raise RuntimeError(f"Parallel task {run_id} ended with status={status}")
+def _run_status(run_id: str) -> str:
+    resp = httpx.get(f"{API_BASE}/v1/tasks/runs/{run_id}", headers=_headers(), timeout=30)
+    resp.raise_for_status()
+    return resp.json().get("status")
 
+
+def _fetch_result(run_id: str) -> dict:
     resp = httpx.get(f"{API_BASE}/v1/tasks/runs/{run_id}/result", headers=_headers(), timeout=60)
     resp.raise_for_status()
     payload = resp.json()
@@ -127,6 +119,66 @@ def wait_for_result(run_id: str, timeout_s: int = 600, poll_s: float = 5.0) -> d
     return {"content": content or {}, "basis": (payload.get("output") or {}).get("basis", [])}
 
 
+def wait_for_result(run_id: str, timeout_s: int = 600, poll_s: float = 5.0) -> dict:
+    """Poll until the run finishes; return the parsed structured output."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        status = _run_status(run_id)
+        if status in ("completed", "failed", "cancelled"):
+            break
+        time.sleep(poll_s)
+    else:
+        raise TimeoutError(f"Parallel task {run_id} did not finish in {timeout_s}s")
+    if status != "completed":
+        raise RuntimeError(f"Parallel task {run_id} ended with status={status}")
+    return _fetch_result(run_id)
+
+
 def run_task(input_text: str, output_schema: dict, processor: str = "base", timeout_s: int = 600) -> dict:
     run_id = create_task_run(input_text, output_schema, processor)
     return wait_for_result(run_id, timeout_s=timeout_s)
+
+
+def run_tasks_batch(
+    tasks: list[tuple[str, dict]],
+    processor: str = "base",
+    timeout_s: int = 600,
+    poll_s: float = 5.0,
+) -> list[dict | Exception]:
+    """Create every task run up front, then poll them together.
+
+    Returns one entry per input task, in input order: the parsed result dict,
+    or the Exception that task hit (creation failure, run failure, timeout).
+    Wall-clock ~= the slowest single task, not the sum of all tasks.
+    """
+    results: list = [None] * len(tasks)
+    pending: dict[int, str] = {}
+    for i, (input_text, schema) in enumerate(tasks):
+        try:
+            pending[i] = create_task_run(input_text, schema, processor)
+        except Exception as exc:
+            results[i] = exc
+
+    deadline = time.monotonic() + timeout_s
+    while pending and time.monotonic() < deadline:
+        for i, run_id in list(pending.items()):
+            try:
+                status = _run_status(run_id)
+            except Exception as exc:
+                results[i] = exc
+                del pending[i]
+                continue
+            if status == "completed":
+                try:
+                    results[i] = _fetch_result(run_id)
+                except Exception as exc:
+                    results[i] = exc
+                del pending[i]
+            elif status in ("failed", "cancelled"):
+                results[i] = RuntimeError(f"Parallel task {run_id} ended with status={status}")
+                del pending[i]
+        if pending:
+            time.sleep(poll_s)
+    for i, run_id in pending.items():
+        results[i] = TimeoutError(f"Parallel task {run_id} did not finish in {timeout_s}s")
+    return results
