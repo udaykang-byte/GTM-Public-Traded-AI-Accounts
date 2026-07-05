@@ -9,12 +9,22 @@ Production (v2): OpenRouterProvider consumes the SAME packets via API —
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Protocol
 
 import httpx
 
 from pipeline.config import env
 from pipeline.models import ScoreVerdict
+
+
+def packet_shared_fields(packet: dict) -> tuple[str, dict, dict]:
+    """(rubric, services_catalog, output_schema) — from the packet if embedded
+    (pre-dedupe packets), else from its shared_file (slim packets)."""
+    if all(k in packet for k in ("rubric", "services_catalog", "output_schema")):
+        return packet["rubric"], packet["services_catalog"], packet["output_schema"]
+    shared = json.loads(Path(packet["shared_file"]).read_text())
+    return shared["rubric"], shared["services_catalog"], shared["output_schema"]
 
 
 class LLMProvider(Protocol):
@@ -45,15 +55,16 @@ class OpenRouterProvider:
         self.model = model or env("OPENROUTER_MODEL", "anthropic/claude-haiku-4.5")
 
     def score_packet(self, packet: dict) -> ScoreVerdict:
+        rubric, services_catalog, output_schema = packet_shared_fields(packet)
         prompt = (
             "You are a B2B account scorer for an AI-services company.\n\n"
-            f"{packet['rubric']}\n\n"
+            f"{rubric}\n\n"
             f"COMPANY: {json.dumps(packet['company'])}\n\n"
             f"SIGNALS: {json.dumps(packet['signals'], default=str)}\n\n"
             f"BASE SCORE (deterministic): {json.dumps(packet['base_score'])}\n\n"
-            f"SERVICES CATALOG: {json.dumps(packet['services_catalog'])}\n\n"
+            f"SERVICES CATALOG: {json.dumps(services_catalog)}\n\n"
             "Respond with ONLY a JSON object matching this schema (no markdown fences):\n"
-            f"{json.dumps(packet['output_schema'])}"
+            f"{json.dumps(output_schema)}"
         )
         resp = httpx.post(
             self.URL,
