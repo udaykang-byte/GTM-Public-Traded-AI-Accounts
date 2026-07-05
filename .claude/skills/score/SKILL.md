@@ -15,9 +15,21 @@ Writes one JSON packet per company to `data/scoring_queue/` (signals + evidence 
 
 ## Step 2 — spawn Haiku subagents to reason
 
-List the queued packets, then spawn **Agent tool subagents with `model: haiku`**, giving each subagent a batch of **up to 5 packet file paths**. Spawn batches in parallel (single message, multiple Agent calls). Each subagent prompt must say:
+List the queued packets (`data/scoring_queue/*.json` — ignore `_shared.json`, it is
+the shared rubric/catalog/schema, not a packet), then spawn **Agent tool subagents
+with `model: haiku`**, giving each subagent a batch of **up to 5 packet file paths**.
+Spawn batches in parallel (single message, multiple Agent calls). Each subagent
+prompt must say:
 
-> You are a B2B account scorer for an AI-services company. For EACH packet file listed below: (1) Read the JSON packet. (2) Follow the `rubric` and `instructions` inside it exactly. (3) Write your verdict as JSON to `data/scoring_results/<ticker>.json` (the packet tells you the exact output path and JSON schema — match it exactly; component scores must respect their max values; `reasoning` must cite specific evidence quotes/URLs from the packet; never invent facts not in the packet). Process every packet. Reply only with a one-line summary per ticker: `TICKER total profile`.
+> You are a B2B account scorer for an AI-services company. First read
+> `data/scoring_queue/_shared.json` ONCE — it holds the rubric, services catalog, and
+> required output schema shared by every packet. Then for EACH packet file listed
+> below: (1) Read the JSON packet. (2) Follow the shared `rubric` and the packet's
+> `instructions` exactly. (3) Write your verdict as JSON to the packet's
+> `output_path` (match `output_schema` exactly; component scores must respect their
+> max values; `reasoning` must cite specific evidence quotes/URLs from the packet;
+> never invent facts not in the packet). Process every packet. Reply only with a
+> one-line summary per ticker: `TICKER total profile`.
 >
 > Packets: <absolute paths>
 

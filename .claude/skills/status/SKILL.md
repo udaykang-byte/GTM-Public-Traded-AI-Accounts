@@ -17,6 +17,8 @@ Then summarize for the user:
 - Funnel shape and where the bottleneck is (e.g., "42 enriched but only 5 scored → run /score next").
 - Any recently qualified companies worth attention (name, ticker, score, top service fit).
 - Suggest the single next command.
+- The **review band** (status `scored`: total between `disqualify_below` and `qualify_threshold`) is a human decision queue — when it's non-empty, list its companies with scores and ask whether any should be promoted.
+- Promote review-band companies the user approves with `uv run python -m pipeline promote TICK1,TICK2` (this is the human review-band decision — never promote without the user saying so).
 
 Failure modes:
 - `Missing SUPABASE_URL` → .env not configured; point the user at `.env.example`.
