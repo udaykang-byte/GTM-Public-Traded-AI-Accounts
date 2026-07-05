@@ -118,12 +118,10 @@ def base_components(signals: list[dict]) -> dict:
     return totals
 
 
-def _derived_cohort_signal(company: dict, signals: list[dict]) -> dict | None:
+def _derived_cohort_signal(
+    company: dict, signals: list[dict], peers: list[dict], signals_by_cik: dict[int, list[dict]]
+) -> dict | None:
     """E8 peer-laggard note, computed from our own enriched cohort in the DB."""
-    try:
-        peers = db.get_companies()  # all — cheap at this scale
-    except SystemExit:
-        return None
     sector = company.get("sector_bucket")
     cohort = [p for p in peers if p.get("sector_bucket") == sector and p["cik"] != company["cik"]]
     if len(cohort) < 5:
@@ -131,14 +129,10 @@ def _derived_cohort_signal(company: dict, signals: list[dict]) -> dict | None:
     has_ai_lang = any(s["type"] in ("E1", "E2") for s in signals)
     if has_ai_lang:
         return None
-    with_ai = 0
-    for p in cohort:
-        try:
-            psigs = db.get_signals(p["cik"])
-        except Exception:
-            continue
-        if any(s["type"] in ("E1", "E2", "P3") for s in psigs):
-            with_ai += 1
+    with_ai = sum(
+        1 for p in cohort
+        if any(s["type"] in ("E1", "E2", "P3") for s in signals_by_cik.get(int(p["cik"]), []))
+    )
     share = with_ai / len(cohort)
     if share >= 0.4:
         return {
@@ -159,9 +153,11 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
         companies = companies[:limit]
 
     schema = ScoreVerdict.model_json_schema()
+    peers = db.get_companies()
+    signals_by_cik = db.all_signals()
     written: list[str] = []
     for company in companies:
-        signals = db.get_signals(company["cik"])
+        signals = signals_by_cik.get(int(company["cik"]), [])
         slim_signals = [
             {k: s.get(k) for k in ("type", "source", "title", "detail", "evidence_url", "evidence_quote", "observed_at", "weight")}
             for s in signals
@@ -169,7 +165,7 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
         for s in slim_signals:
             s["age_days"] = _signal_age_days(s)
             s["effective_weight"] = effective_weight(s)
-        derived = _derived_cohort_signal(company, slim_signals)
+        derived = _derived_cohort_signal(company, slim_signals, peers, signals_by_cik)
         if derived:
             slim_signals.append(derived)
         packet = {

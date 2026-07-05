@@ -98,6 +98,22 @@ def replace_signals(cik: int, source: str, signals: list[Signal]) -> int:
     return len(rows)
 
 
+def all_signals() -> dict[int, list[dict]]:
+    """Every signal, grouped by company_cik — one paginated fetch instead of per-company round trips."""
+    grouped: dict[int, list[dict]] = {}
+    page, offset = 1000, 0
+    while True:
+        rows = (
+            client().table("signals").select("*")
+            .order("id").range(offset, offset + page - 1).execute().data
+        ) or []
+        for r in rows:
+            grouped.setdefault(int(r["company_cik"]), []).append(r)
+        if len(rows) < page:
+            return grouped
+        offset += page
+
+
 def get_signals(cik: int) -> list[dict]:
     return (
         client().table("signals").select("*").eq("company_cik", cik).order("weight", desc=True)
