@@ -212,9 +212,10 @@ def enrich(
             # already have parallel signals unless --force
             pool = db.get_companies(status="new") + db.get_companies(status="enriched")
             if not force:
+                sigs_by_cik = db.all_signals()
                 pool = [
                     c for c in pool
-                    if not any(s["source"] == "parallel" for s in db.get_signals(c["cik"]))
+                    if not any(s["source"] == "parallel" for s in sigs_by_cik.get(int(c["cik"]), []))
                 ]
             targets = pool
         else:
@@ -228,37 +229,49 @@ def enrich(
         return
 
     parallel_cap = int(SETTINGS.get("enrich", {}).get("parallel", {}).get("max_tasks_per_run", 25))
-    parallel_used = 0
     run_id = None if dry_run else db.start_run(f"enrich:{source}")
     stats = {"companies": 0, "signals": 0, "errors": 0}
 
+    edgar_by_cik: dict[int, tuple[list, list]] = {}
+    parallel_by_cik: dict[int, tuple[list, list]] = {}
+
+    if source in ("edgar", "all"):
+        from pipeline import edgar_signals
+        for company in targets:
+            edgar_by_cik[int(company["cik"])] = edgar_signals.collect(company)
+
+    if source in ("parallel", "all"):
+        batch = targets[:parallel_cap]
+        if len(targets) > parallel_cap:
+            console.print(
+                f"[yellow]Parallel cap ({parallel_cap}/run) — skipping "
+                f"{len(targets) - parallel_cap} companies[/yellow]"
+            )
+        if dry_run:
+            for company in batch:
+                console.print(f"[dim]{company['ticker']}: would run 1 Parallel task (P1-P6)[/dim]")
+        elif batch:
+            from pipeline import parallel_signals
+            console.print(f"[dim]{len(batch)} Parallel tasks created up front, polled together…[/dim]")
+            parallel_by_cik = parallel_signals.collect_batch(batch)
+
     for company in targets:
-        tick = company["ticker"]
-        all_signals, all_errors = [], []
-        if source in ("edgar", "all"):
-            from pipeline import edgar_signals
-            sigs, errs = edgar_signals.collect(company)
-            all_signals += sigs
-            all_errors += errs
-            if not dry_run:
-                db.replace_signals(company["cik"], "edgar", sigs)
-        if source in ("parallel", "all"):
-            if parallel_used >= parallel_cap:
-                console.print(f"[yellow]Parallel cap ({parallel_cap}/run) reached — skipping {tick}[/yellow]")
-            else:
-                from pipeline import parallel_signals
-                parallel_used += 1
-                sigs, errs = parallel_signals.collect(company)
-                all_signals += sigs
-                all_errors += errs
-                if not dry_run:
-                    db.replace_signals(company["cik"], "parallel", sigs)
-        _print_signals(tick, all_signals, all_errors)
+        cik = int(company["cik"])
+        sigs_e, errs_e = edgar_by_cik.get(cik, ([], []))
+        sigs_p, errs_p = parallel_by_cik.get(cik, ([], []))
+        if not dry_run:
+            if source in ("edgar", "all"):
+                db.replace_signals(cik, "edgar", sigs_e)
+            if cik in parallel_by_cik and not errs_p:
+                # only replace on task success — a failed task must not wipe
+                # previously collected parallel signals
+                db.replace_signals(cik, "parallel", sigs_p)
+        _print_signals(company["ticker"], sigs_e + sigs_p, errs_e + errs_p)
         stats["companies"] += 1
-        stats["signals"] += len(all_signals)
-        stats["errors"] += len(all_errors)
+        stats["signals"] += len(sigs_e) + len(sigs_p)
+        stats["errors"] += len(errs_e) + len(errs_p)
         if not dry_run and company.get("status") in (None, "new", "enriched"):
-            db.set_status(company["cik"], "enriched")
+            db.set_status(cik, "enriched")
 
     if not dry_run:
         db.finish_run(run_id, stats)
@@ -326,7 +339,7 @@ def people(
     """Find decision-makers for qualified accounts (Parallel research, paid)."""
     from pipeline import db
     from pipeline.config import SETTINGS
-    from pipeline.people import find_people, target_roles
+    from pipeline.people import find_people_batch, target_roles
 
     cap = int(SETTINGS.get("people", {}).get("max_companies_per_run", 10))
     if ticker:
@@ -342,19 +355,25 @@ def people(
         return
 
     run_id = None if dry_run else db.start_run("people")
-    found_total = 0
+    items: list[tuple[dict, list[dict]]] = []
     for company in targets:
         s = db.latest_score(company["cik"])
         fits = (s or {}).get("service_fit") or []
-        roles = target_roles(fits)
         if dry_run:
-            console.print(f"{company['ticker']}: would search roles {roles}")
+            console.print(f"{company['ticker']}: would search roles {target_roles(fits)}")
+        else:
+            items.append((company, fits))
+    if dry_run:
+        return
+
+    console.print(f"[dim]{len(items)} Parallel people tasks created up front, polled together…[/dim]")
+    results = find_people_batch(items)
+    found_total = 0
+    for (company, _), res in zip(items, results):
+        if isinstance(res, Exception):
+            console.print(f"[red]{company['ticker']}: people search failed: {res}[/red]")
             continue
-        try:
-            contacts, notes = find_people(company, fits)
-        except Exception as exc:
-            console.print(f"[red]{company['ticker']}: people search failed: {exc}[/red]")
-            continue
+        contacts, notes = res
         db.insert_contacts(contacts)
         db.set_status(company["cik"], "contacts_found")
         found_total += len(contacts)
@@ -367,7 +386,7 @@ def people(
         if notes:
             console.print(f"[dim]{notes}[/dim]")
     if not dry_run:
-        db.finish_run(run_id, {"companies": len(targets), "contacts": found_total})
+        db.finish_run(run_id, {"companies": len(items), "contacts": found_total})
 
 
 @app.command()
