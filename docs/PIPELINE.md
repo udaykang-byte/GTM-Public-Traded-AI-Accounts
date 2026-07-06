@@ -9,6 +9,14 @@
    — or paste `sql/schema.sql` into the Supabase SQL editor once.
 4. Parallel auth: `parallel-cli login` (device OAuth) or set `PARALLEL_API_KEY`.
 
+### Upgrading to outreach-angles
+
+Existing installs must re-run `uv run python -m pipeline apply-schema` after
+pulling the outreach-angles feature — it adds the new `angles` table and new
+`scores` columns, and `score --commit` fails without them. Discard and
+re-prepare any scoring-queue packets built before the upgrade: pre-upgrade
+packets have no `angles` key and will be gate-blocked as `no_active_angle`.
+
 ## Normal cycle
 
 ```bash

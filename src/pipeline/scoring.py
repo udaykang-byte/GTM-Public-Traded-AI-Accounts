@@ -182,6 +182,14 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
     peers = db.get_companies()
     signals_by_cik = db.all_signals()
     angles_by_cik = db.all_angles()
+    stale_ids = [
+        a["id"]
+        for rows in angles_by_cik.values()
+        for a in rows
+        if a.get("id") is not None and a.get("status") == "active"
+        and not angles_mod.is_fresh(a["family"], a["event_date"])
+    ]
+    db.mark_angles_stale(stale_ids)
     written: list[str] = []
     for company in companies:
         signals = signals_by_cik.get(int(company["cik"]), [])
@@ -287,9 +295,12 @@ def commit(run_id: str | None = None) -> dict:
             if total >= threshold and has_hard and not has_angle:
                 gate_reason = "no_active_angle"
 
-        # tightened gate never demotes accounts already past qualification
+        # tightened gate never demotes accounts already past qualification;
+        # gate_reason is scoped to the review band, so a kept account never
+        # carries a stale "no_active_angle" into its summary item or scores row
         if company.get("status") in ("qualified", "contacts_found"):
             new_status, bucket = Status(company["status"]), "kept"
+            gate_reason = ""
 
         db.insert_score({
             "company_cik": company["cik"],

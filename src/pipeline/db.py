@@ -183,6 +183,15 @@ def all_angles() -> dict[int, list[dict]]:
         offset += page
 
 
+def mark_angles_stale(ids: list[int]) -> int:
+    """Flip status to 'stale' for the given angle row ids (chunked)."""
+    if not ids:
+        return 0
+    for i in range(0, len(ids), 100):
+        client().table("angles").update({"status": "stale"}).in_("id", ids[i : i + 100]).execute()
+    return len(ids)
+
+
 # ---------- contacts ----------
 
 def insert_contacts(contacts: list[Contact]) -> int:

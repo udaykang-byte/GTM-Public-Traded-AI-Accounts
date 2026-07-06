@@ -191,7 +191,7 @@ def _enrich_deep(limit: int | None, ticker: str | None, dry_run: bool):
             pool.extend(db.get_companies(status=st))
         totals = {int(c["cik"]): float((db.latest_score(c["cik"]) or {}).get("total") or 0) for c in pool}
         cap = int(SETTINGS.get("enrich", {}).get("deep", {}).get("max_tasks_per_run", 15))
-        targets = angles_mod.select_deep_targets(pool, totals, min(limit or cap, cap))
+        targets = angles_mod.select_deep_targets(pool, totals, min(limit, cap))
 
     if not targets:
         console.print("No deep-tier candidates (statuses scored/qualified/contacts_found).")
@@ -340,7 +340,7 @@ def enrich(
         for a in f_angles:
             console.print(f"[dim]  angle \\[funding] {a.headline[:70]}[/dim]")
         stats["errors"] += len(f_errs)
-        _print_signals(company["ticker"], sigs_e + sigs_p, errs_e + errs_p)
+        _print_signals(company["ticker"], sigs_e + sigs_p, errs_e + errs_p + f_errs)
         stats["companies"] += 1
         stats["signals"] += len(sigs_e) + len(sigs_p)
         stats["angles"] += len(f_angles)
@@ -431,7 +431,7 @@ def people(
             raise typer.BadParameter(f"{ticker} not in pipeline")
         targets = [row]
     else:
-        targets = db.get_companies(status="qualified", limit=min(limit or cap, cap))
+        targets = db.get_companies(status="qualified", limit=(cap if limit is None else min(limit, cap)))
 
     if not targets:
         console.print("No qualified companies awaiting people search.")
@@ -486,10 +486,17 @@ def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")
             active = [a for a in db.get_angles(company["cik"])
                       if angles_mod.is_fresh(a["family"], a["event_date"])]
             pa = s.get("primary_angle") or {}
-            pa_headline = next((a["headline"] for a in active
-                                if a["fingerprint"] == pa.get("fingerprint")), "")
-            hook = next((r.get("message_hook", "") for r in (s.get("angle_ranking") or [])
-                         if r.get("fingerprint") == pa.get("fingerprint")), "")
+            pa_fp = pa.get("fingerprint")
+            pa_row = next((a for a in active if a["fingerprint"] == pa_fp), None) if pa_fp else None
+            if pa_row is not None:
+                angle_family = pa.get("family") or ""
+                pa_headline = pa_row["headline"]
+                hook = next((r.get("message_hook", "") for r in (s.get("angle_ranking") or [])
+                             if r.get("fingerprint") == pa_fp), "")
+            else:
+                angle_family = ""
+                pa_headline = ""
+                hook = ""
             base = {
                 "ticker": company["ticker"], "company": company["name"],
                 "sector": company["sector_bucket"], "market_cap": company["market_cap"],
@@ -498,7 +505,7 @@ def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")
                 "why_now": (s.get("why_now") or "")[:300],
                 "reasoning": (s.get("reasoning") or "")[:300],
                 "angle_ready": bool(active),
-                "angle_family": pa.get("family") or "",
+                "angle_family": angle_family,
                 "primary_angle": pa_headline,
                 "message_hook": hook,
             }

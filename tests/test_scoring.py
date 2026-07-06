@@ -23,6 +23,7 @@ class FakeDB:
         self.statuses = []
         self.angles_rows = []
         self.company_status = "enriched"
+        self.stale_marked = []
 
     def get_companies(self, status=None):
         return [dict(COMPANY)] if status in (None, "enriched") else []
@@ -44,6 +45,10 @@ class FakeDB:
 
     def get_angles(self, cik):
         return [dict(r) for r in self.angles_rows]
+
+    def mark_angles_stale(self, ids):
+        self.stale_marked.extend(ids)
+        return len(ids)
 
 
 @pytest.fixture
@@ -114,13 +119,14 @@ def test_commit_archives_shared_file_and_drains_queue(dirs):
 from datetime import date, timedelta
 
 ANGLE_ROW = {
+    "id": 3,
     "fingerprint": "funding:0001234-26-000042", "family": "funding",
     "headline": "Offering priced ~$12M — 424B5", "details": {"instrument": "follow_on"},
     "event_date": (date.today() - timedelta(days=20)).isoformat(),
     "strength": 1.0, "evidence_url": "https://sec.gov/x", "evidence_quote": "proceeds",
     "company_cik": 1, "source": "edgar", "status": "active",
 }
-STALE_ANGLE_ROW = {**ANGLE_ROW, "fingerprint": "funding:old",
+STALE_ANGLE_ROW = {**ANGLE_ROW, "id": 7, "fingerprint": "funding:old",
                    "event_date": (date.today() - timedelta(days=400)).isoformat()}
 
 
@@ -154,6 +160,13 @@ def test_packet_includes_only_active_angles(dirs):
     assert packet["angles"][0]["age_days"] == 20
 
 
+def test_prepare_marks_out_of_window_active_angles_stale(dirs):
+    q, r, a = dirs
+    scoring.db.angles_rows = [dict(ANGLE_ROW), dict(STALE_ANGLE_ROW)]
+    scoring.prepare()
+    assert scoring.db.stale_marked == [STALE_ANGLE_ROW["id"]]
+
+
 def test_qualifies_with_active_angle(dirs):
     summary = _run_commit(dirs, [dict(ANGLE_ROW)], make_verdict())
     assert [x["ticker"] for x in summary["qualified"]] == ["TST"]
@@ -184,6 +197,15 @@ def test_no_demotion_for_contacts_found(dirs):
     assert summary["kept"][0]["ticker"] == "TST"
     # FakeDB stores str(Status.x) which renders as "Status.contacts_found"
     assert scoring.db.statuses[-1][1].endswith("contacts_found")
+
+
+def test_no_demotion_clears_gate_reason_when_would_be_blocked(dirs):
+    # no angles + a qualifying score would normally be gate-blocked
+    # ("no_active_angle"); a contacts_found company must be kept clean of it
+    summary = _run_commit(dirs, [], make_verdict(), company_status="contacts_found")
+    assert summary["kept"][0]["ticker"] == "TST"
+    assert "gate_reason" not in summary["kept"][0]
+    assert scoring.db.scores[0]["gate_reason"] == ""
 
 
 def test_hallucinated_primary_angle_stripped(dirs):
