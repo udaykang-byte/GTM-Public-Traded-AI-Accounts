@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from supabase import Client, create_client
 
 from pipeline.config import require_env
-from pipeline.models import Company, Contact, Signal, Status
+from pipeline.models import Angle, Company, Contact, Signal, Status
 
 _client: Client | None = None
 
@@ -146,6 +146,41 @@ def recent_qualified(limit: int = 10) -> list[dict]:
         r["total"] = s["total"] if s else None
         r["service_fit"] = (s or {}).get("service_fit") or []
     return rows
+
+
+# ---------- angles ----------
+
+def upsert_angles(angles: list[Angle]) -> int:
+    """Dedupe by (company_cik, fingerprint): new events insert, known events
+    refresh strength/status. Never bulk-deletes — angles accumulate."""
+    if not angles:
+        return 0
+    rows = [a.model_dump(mode="json") for a in angles]
+    client().table("angles").upsert(rows, on_conflict="company_cik,fingerprint").execute()
+    return len(rows)
+
+
+def get_angles(cik: int) -> list[dict]:
+    return (
+        client().table("angles").select("*").eq("company_cik", cik)
+        .order("strength", desc=True).execute().data or []
+    )
+
+
+def all_angles() -> dict[int, list[dict]]:
+    """Every angle, grouped by company_cik — mirrors all_signals()."""
+    grouped: dict[int, list[dict]] = {}
+    page, offset = 1000, 0
+    while True:
+        rows = (
+            client().table("angles").select("*")
+            .order("id").range(offset, offset + page - 1).execute().data
+        ) or []
+        for r in rows:
+            grouped.setdefault(int(r["company_cik"]), []).append(r)
+        if len(rows) < page:
+            return grouped
+        offset += page
 
 
 # ---------- contacts ----------
