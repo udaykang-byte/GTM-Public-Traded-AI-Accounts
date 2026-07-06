@@ -359,15 +359,21 @@ def score(
     commit: bool = typer.Option(False, "--commit"),
     limit: int = typer.Option(None, "--limit"),
     provider: str = typer.Option("claude-code", "--provider", help="claude-code (v1) | openrouter (v2)"),
+    statuses: str = typer.Option(
+        "enriched", "--statuses",
+        help="Comma-separated company statuses to (re)score with --prepare, e.g. 'enriched,scored'",
+    ),
 ):
     """Score + qualify. v1: --prepare, then the /score skill, then --commit."""
     from pipeline import scoring
+
+    status_tuple = tuple(s.strip() for s in statuses.split(",") if s.strip())
 
     if provider == "openrouter":
         from pipeline.config import QUEUE_DIR, RESULTS_DIR
         from pipeline.llm import get_provider
 
-        paths = scoring.prepare(limit=limit)
+        paths = scoring.prepare(limit=limit, statuses=status_tuple)
         llm = get_provider("openrouter")
         for p in paths:
             packet = json.loads(Path(p).read_text())
@@ -379,7 +385,7 @@ def score(
         return
 
     if prepare:
-        paths = scoring.prepare(limit=limit)
+        paths = scoring.prepare(limit=limit, statuses=status_tuple)
         console.print(f"Prepared {len(paths)} scoring packets in data/scoring_queue/")
         console.print("Next: use the /score skill (Haiku subagents), then `score --commit`.")
         for p in paths:
@@ -469,6 +475,7 @@ def people(
 @app.command()
 def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")):
     """CSV of qualified accounts + contacts (one row per contact)."""
+    from pipeline import angles as angles_mod
     from pipeline import db
 
     rows = []
@@ -476,6 +483,13 @@ def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")
         for company in db.get_companies(status=st):
             s = db.latest_score(company["cik"]) or {}
             fits = s.get("service_fit") or []
+            active = [a for a in db.get_angles(company["cik"])
+                      if angles_mod.is_fresh(a["family"], a["event_date"])]
+            pa = s.get("primary_angle") or {}
+            pa_headline = next((a["headline"] for a in active
+                                if a["fingerprint"] == pa.get("fingerprint")), "")
+            hook = next((r.get("message_hook", "") for r in (s.get("angle_ranking") or [])
+                         if r.get("fingerprint") == pa.get("fingerprint")), "")
             base = {
                 "ticker": company["ticker"], "company": company["name"],
                 "sector": company["sector_bucket"], "market_cap": company["market_cap"],
@@ -483,6 +497,10 @@ def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")
                 "score": s.get("total"), "lead_service": fits[0]["service"] if fits else "",
                 "why_now": (s.get("why_now") or "")[:300],
                 "reasoning": (s.get("reasoning") or "")[:300],
+                "angle_ready": bool(active),
+                "angle_family": pa.get("family") or "",
+                "primary_angle": pa_headline,
+                "message_hook": hook,
             }
             contacts = db.get_contacts(company["cik"])
             if not contacts:
