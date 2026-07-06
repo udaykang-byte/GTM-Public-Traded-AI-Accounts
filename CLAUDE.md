@@ -61,4 +61,6 @@ Prefer them — they encode the correct orchestration (especially /score).
 - `sql/schema.sql` — Supabase DDL (apply via SUPABASE_DB_URL or SQL editor)
 - `docs/SIGNALS.md` — signal taxonomy E1–E9 / P1–P6 with detection logic
 - `docs/PIPELINE.md` — runbook
+- `docs/ARCHITECTURE.md` — module map, data flow, design decisions
+- `README.md` / `CONTRIBUTING.md` — public-facing guide + collaboration rules
 - `data/` — gitignored: caches, scoring queue/results, exports
