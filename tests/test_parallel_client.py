@@ -1,6 +1,4 @@
 """run_tasks_batch orchestration tests — HTTP helpers are monkeypatched."""
-import pytest
-
 from pipeline import parallel_client as pc
 
 
@@ -56,3 +54,35 @@ def test_timeout_becomes_timeout_error(monkeypatch):
     results = pc.run_tasks_batch([("a", {})], timeout_s=0.05, poll_s=0.01)
 
     assert isinstance(results[0], TimeoutError)
+
+
+def test_transient_poll_error_retries_next_round(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(pc, "create_task_run", lambda text, schema, processor="base": "run-x")
+    calls = {"n": 0}
+
+    def status(run_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("blip")
+        return "completed"
+
+    monkeypatch.setattr(pc, "_run_status", status)
+    monkeypatch.setattr(pc, "_fetch_result", lambda run_id: {"content": {}, "basis": []})
+
+    results = pc.run_tasks_batch([("a", {})], timeout_s=5)
+
+    assert results == [{"content": {}, "basis": []}]
+    assert calls["n"] == 2
+
+
+def test_multi_round_polling_resolves_tasks_across_rounds(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(pc, "create_task_run", lambda text, schema, processor="base": f"run-{text}")
+    rounds = {"run-a": iter(["running", "completed"]), "run-b": iter(["running", "running", "completed"])}
+    monkeypatch.setattr(pc, "_run_status", lambda run_id: next(rounds[run_id]))
+    monkeypatch.setattr(pc, "_fetch_result", lambda run_id: {"content": {"id": run_id}, "basis": []})
+
+    results = pc.run_tasks_batch([("a", {}), ("b", {})], timeout_s=5)
+
+    assert [r["content"]["id"] for r in results] == ["run-a", "run-b"]

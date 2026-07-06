@@ -5,7 +5,7 @@ v1 flow (no LLM API cost):
   /score skill     ->  Claude Code Haiku subagents write data/scoring_results/<TICKER>.json
   score --commit   ->  validate, write to Supabase, qualify/disqualify
 
-The packet is self-contained: a scorer needs nothing but the packet.
+Packets are slim: the shared rubric/catalog/schema live in data/scoring_queue/_shared.json (each packet's `shared_file`); a scorer needs the packet plus that shared file.
 """
 from __future__ import annotations
 

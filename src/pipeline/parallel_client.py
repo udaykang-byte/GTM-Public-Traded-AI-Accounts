@@ -151,7 +151,7 @@ def run_tasks_batch(
     or the Exception that task hit (creation failure, run failure, timeout).
     Wall-clock ~= the slowest single task, not the sum of all tasks.
     """
-    results: list = [None] * len(tasks)
+    results: list[dict | Exception | None] = [None] * len(tasks)
     pending: dict[int, str] = {}
     for i, (input_text, schema) in enumerate(tasks):
         try:
@@ -164,10 +164,8 @@ def run_tasks_batch(
         for i, run_id in list(pending.items()):
             try:
                 status = _run_status(run_id)
-            except Exception as exc:
-                results[i] = exc
-                del pending[i]
-                continue
+            except Exception:
+                continue  # transient poll error — retry next round; the deadline bounds it
             if status == "completed":
                 try:
                     results[i] = _fetch_result(run_id)

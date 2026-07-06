@@ -229,6 +229,12 @@ def enrich(
         return
 
     parallel_cap = int(SETTINGS.get("enrich", {}).get("parallel", {}).get("max_tasks_per_run", 25))
+    if source == "parallel" and len(targets) > parallel_cap:
+        console.print(
+            f"[yellow]Parallel cap ({parallel_cap}/run) — dropping "
+            f"{len(targets) - parallel_cap} companies this run[/yellow]"
+        )
+        targets = targets[:parallel_cap]
     run_id = None if dry_run else db.start_run(f"enrich:{source}")
     stats = {"companies": 0, "signals": 0, "errors": 0}
 

@@ -58,6 +58,14 @@ def test_item_205_yields_e4():
     assert [s.type for s in signals] == ["E4"]
 
 
+def test_item_205_yields_e4_without_phrase_match():
+    text = "The company disclosed a material charge associated with exit activities."
+    f = FakeFiling(["2.05"], text=text)
+    signals = es.eightk_signals(FakeCompany([f]), COMPANY)
+    assert [s.type for s in signals] == ["E4"]
+    assert f.text_calls == 1
+
+
 def test_old_filing_stops_scan():
     old = FakeFiling(["5.02"], text="appointed chief executive officer",
                      filing_date=date.today() - timedelta(days=400))
