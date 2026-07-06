@@ -219,7 +219,7 @@ def _enrich_deep(limit: int | None, ticker: str | None, dry_run: bool):
         db.upsert_angles(f_angles + p_angles)
         _print_signals(company["ticker"], sigs, f_errs + warns)
         for a in f_angles + p_angles:
-            console.print(f"[dim]  angle [{a.family.value}] {a.headline[:70]} (strength {a.strength})[/dim]")
+            console.print(f"[dim]  angle \\[{a.family.value}] {a.headline[:70]} (strength {a.strength})[/dim]")
         stats["companies"] += 1
         stats["signals"] += len(sigs)
         stats["angles"] += len(f_angles) + len(p_angles)
@@ -338,7 +338,7 @@ def enrich(
         if not dry_run and f_angles:
             db.upsert_angles(f_angles)
         for a in f_angles:
-            console.print(f"[dim]  angle [funding] {a.headline[:70]}[/dim]")
+            console.print(f"[dim]  angle \\[funding] {a.headline[:70]}[/dim]")
         stats["errors"] += len(f_errs)
         _print_signals(company["ticker"], sigs_e + sigs_p, errs_e + errs_p)
         stats["companies"] += 1
