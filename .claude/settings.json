@@ -16,7 +16,9 @@
       "Read(//Users/udaykang/AI_Public Traded/**)"
     ],
     "deny": [
-      "Read(./.env)"
+      "Read(./.env)",
+      "Edit(./.env)",
+      "Write(./.env)"
     ]
   },
   "hooks": {
@@ -27,6 +29,17 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/session_status.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/run_tests.sh\""
           }
         ]
       }

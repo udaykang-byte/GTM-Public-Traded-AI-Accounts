@@ -10,9 +10,11 @@ __pycache__/
 .venv/
 *.egg-info/
 dist/
+.pytest_cache/
 
 # local claude state
 .claude/settings.local.json
+.superpowers/
 
 # os
 .DS_Store
