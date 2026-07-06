@@ -53,3 +53,61 @@ def test_collect_batch_isolates_parse_failures(monkeypatch):
 
 def test_collect_batch_empty_input():
     assert ps.collect_batch([]) == {}
+
+
+DEEP_COMPANY = {"cik": 999, "ticker": "TST", "name": "Test Co", "sector_bucket": "saas", "market_cap": 1e8}
+
+
+def _deep_result(extra):
+    content = {k: {"found": False, "summary": "n/a"} for k in (
+        "ai_job_postings", "gtm_hiring", "ai_announcements",
+        "product_ai_gap", "martech_stack", "exec_ai_commentary")}
+    content.update(extra)
+    return {"content": content, "basis": []}
+
+
+def test_deep_schema_extends_enrich_schema():
+    assert "leadership_hires" in ps.DEEP_SCHEMA["properties"]
+    assert "ai_job_postings" in ps.DEEP_SCHEMA["properties"]
+
+
+def test_leadership_hire_maps_to_angle():
+    result = _deep_result({"leadership_hires": [{
+        "role": "Chief Revenue Officer", "person_name": "Jane Roe",
+        "start_date": "2026-05-01", "mandate_quote": "My mandate is pipeline efficiency",
+        "source_url": "https://news.example/cro",
+    }]})
+    angles_out, warnings = ps._angles_from_result(DEEP_COMPANY, result)
+    assert warnings == []
+    a = angles_out[0]
+    assert a.family.value == "leadership"
+    assert a.details["person_name"] == "Jane Roe"
+    assert a.fingerprint == "leadership:chief-revenue-officer:2026-05-01"
+    assert str(a.event_date) == "2026-05-01"
+
+
+def test_ai_move_maps_to_angle():
+    result = _deep_result({"ai_moves": [{
+        "initiative": "Acme AI Copilot", "move_type": "product_launch",
+        "partner": "Google", "announced": "2026-04-15", "source_url": "https://pr.example/x",
+    }]})
+    angles_out, warnings = ps._angles_from_result(DEEP_COMPANY, result)
+    assert angles_out[0].family.value == "ai_move"
+    assert angles_out[0].details["partner"] == "Google"
+
+
+def test_undated_item_dropped_with_warning():
+    result = _deep_result({"leadership_hires": [{"role": "CRO"}]})
+    angles_out, warnings = ps._angles_from_result(DEEP_COMPANY, result)
+    assert angles_out == []
+    assert any("no date" in w for w in warnings)
+
+
+def test_invalid_item_isolated_not_fatal():
+    result = _deep_result({"ai_moves": [
+        {"move_type": "product_launch", "announced": "2026-04-15"},  # missing initiative
+        {"initiative": "Real Thing", "announced": "2026-04-15"},
+    ]})
+    angles_out, warnings = ps._angles_from_result(DEEP_COMPANY, result)
+    assert len(angles_out) == 1
+    assert len(warnings) == 1
