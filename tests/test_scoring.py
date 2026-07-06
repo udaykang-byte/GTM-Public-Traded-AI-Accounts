@@ -21,6 +21,8 @@ class FakeDB:
     def __init__(self):
         self.scores = []
         self.statuses = []
+        self.angles_rows = []
+        self.company_status = "enriched"
 
     def get_companies(self, status=None):
         return [dict(COMPANY)] if status in (None, "enriched") else []
@@ -29,13 +31,19 @@ class FakeDB:
         return {1: [dict(SIGNAL)]}
 
     def get_company_by_ticker(self, ticker):
-        return dict(COMPANY) if ticker == "TST" else None
+        return {**dict(COMPANY), "status": self.company_status} if ticker == "TST" else None
 
     def insert_score(self, row):
         self.scores.append(row)
 
     def set_status(self, cik, status, profile=None):
         self.statuses.append((cik, str(status), profile))
+
+    def all_angles(self):
+        return {1: [dict(r) for r in self.angles_rows]} if self.angles_rows else {}
+
+    def get_angles(self, cik):
+        return [dict(r) for r in self.angles_rows]
 
 
 @pytest.fixture
@@ -101,3 +109,88 @@ def test_commit_archives_shared_file_and_drains_queue(dirs):
     assert (run_dir / "packet_TST.json").exists()
     assert not (q / "_shared.json").exists()  # queue drained -> shared file removed
     assert scoring.db.scores and scoring.db.statuses
+
+
+from datetime import date, timedelta
+
+ANGLE_ROW = {
+    "fingerprint": "funding:0001234-26-000042", "family": "funding",
+    "headline": "Offering priced ~$12M — 424B5", "details": {"instrument": "follow_on"},
+    "event_date": (date.today() - timedelta(days=20)).isoformat(),
+    "strength": 1.0, "evidence_url": "https://sec.gov/x", "evidence_quote": "proceeds",
+    "company_cik": 1, "source": "edgar", "status": "active",
+}
+STALE_ANGLE_ROW = {**ANGLE_ROW, "fingerprint": "funding:old",
+                   "event_date": (date.today() - timedelta(days=400)).isoformat()}
+
+
+def make_verdict(**overrides):
+    v = {
+        "ticker": "TST", "intent": 25, "capability_gap": 20, "timing": 15,
+        "commercial_fit": 15, "profile": "adopter",
+        "service_fit": [{"service": "ai_outreach", "priority": 1, "rationale": "r"}],
+        "reasoning": "cited", "why_now": "fresh event", "evidence_cited": [],
+        "confidence": "high", "angle_ranking": [], "primary_angle": None,
+    }
+    v.update(overrides)
+    return v
+
+
+def _run_commit(dirs, angles_rows, verdict, company_status="enriched"):
+    q, r, a = dirs
+    scoring.db.angles_rows = angles_rows
+    scoring.db.company_status = company_status
+    scoring.prepare()
+    (r / "TST.json").write_text(json.dumps(verdict))
+    return scoring.commit(run_id="t")
+
+
+def test_packet_includes_only_active_angles(dirs):
+    q, r, a = dirs
+    scoring.db.angles_rows = [dict(ANGLE_ROW), dict(STALE_ANGLE_ROW)]
+    scoring.prepare()
+    packet = json.loads((q / "TST.json").read_text())
+    assert [x["fingerprint"] for x in packet["angles"]] == ["funding:0001234-26-000042"]
+    assert packet["angles"][0]["age_days"] == 20
+
+
+def test_qualifies_with_active_angle(dirs):
+    summary = _run_commit(dirs, [dict(ANGLE_ROW)], make_verdict())
+    assert [x["ticker"] for x in summary["qualified"]] == ["TST"]
+
+
+def test_blocked_without_angle_goes_review_with_reason(dirs):
+    summary = _run_commit(dirs, [], make_verdict())
+    assert summary["qualified"] == []
+    assert summary["review"][0]["gate_reason"] == "no_active_angle"
+    assert scoring.db.scores[0]["gate_reason"] == "no_active_angle"
+
+
+def test_stale_only_angles_also_blocked(dirs):
+    summary = _run_commit(dirs, [dict(STALE_ANGLE_ROW)], make_verdict())
+    assert summary["qualified"] == []
+    assert summary["review"][0]["gate_reason"] == "no_active_angle"
+
+
+def test_require_angle_false_restores_v1_gate(dirs, monkeypatch):
+    monkeypatch.setitem(scoring.SETTINGS.setdefault("scoring", {}), "require_angle", False)
+    summary = _run_commit(dirs, [], make_verdict())
+    assert [x["ticker"] for x in summary["qualified"]] == ["TST"]
+
+
+def test_no_demotion_for_contacts_found(dirs):
+    low = make_verdict(intent=5, capability_gap=5, timing=5, commercial_fit=5)
+    summary = _run_commit(dirs, [dict(ANGLE_ROW)], low, company_status="contacts_found")
+    assert summary["kept"][0]["ticker"] == "TST"
+    # FakeDB stores str(Status.x) which renders as "Status.contacts_found"
+    assert scoring.db.statuses[-1][1].endswith("contacts_found")
+
+
+def test_hallucinated_primary_angle_stripped(dirs):
+    v = make_verdict(primary_angle={"fingerprint": "made:up", "family": "funding",
+                                    "why_this_angle": "x"},
+                     angle_ranking=[{"fingerprint": "made:up", "family": "funding",
+                                     "message_hook": "h"}])
+    _run_commit(dirs, [dict(ANGLE_ROW)], v)
+    assert scoring.db.scores[0]["primary_angle"] is None
+    assert scoring.db.scores[0]["angle_ranking"] == []

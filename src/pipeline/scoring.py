@@ -6,6 +6,7 @@ v1 flow (no LLM API cost):
   score --commit   ->  validate, write to Supabase, qualify/disqualify
 
 Packets are slim: the shared rubric/catalog/schema live in data/scoring_queue/_shared.json (each packet's `shared_file`); a scorer needs the packet plus that shared file.
+Packets carry active outreach angles; commit enforces the angle-required gate.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from pipeline import angles as angles_mod
 from pipeline import db
 from pipeline.config import ARCHIVE_DIR, QUEUE_DIR, RESULTS_DIR, SERVICES, SETTINGS
 from pipeline.models import ScoreVerdict, Status
@@ -102,6 +104,17 @@ appointed 2026-05-12 — first-100-days agenda"). If no dated evidence is under
 structural gap X") — do not manufacture urgency.
 """
 
+RUBRIC += """
+angle_ranking / primary_angle: the packet's `angles` list holds dated, structured
+outreach events (families: funding, leadership, ai_move) with a pre-computed
+strength. Rank ALL of them by outreach power — strength, specificity, and fit
+with your service_fit — strongest first, each with a one-sentence message_hook
+(the opening line a seller could use). Set primary_angle to the single best one
+with why_this_angle. Copy fingerprint and family EXACTLY from the packet. If
+`angles` is empty, return angle_ranking: [] and primary_angle: null — do not
+invent angles from signals.
+"""
+
 
 def base_components(signals: list[dict]) -> dict:
     caps = SETTINGS.get("scoring", {}).get("component_caps", {})
@@ -168,6 +181,7 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
 
     peers = db.get_companies()
     signals_by_cik = db.all_signals()
+    angles_by_cik = db.all_angles()
     written: list[str] = []
     for company in companies:
         signals = signals_by_cik.get(int(company["cik"]), [])
@@ -181,6 +195,12 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
         derived = _derived_cohort_signal(company, slim_signals, peers, signals_by_cik)
         if derived:
             slim_signals.append(derived)
+        active_angles = [
+            angles_mod.slim(a)
+            for a in angles_by_cik.get(int(company["cik"]), [])
+            if angles_mod.is_fresh(a["family"], a["event_date"])
+        ]
+        active_angles.sort(key=lambda a: -(a.get("strength") or 0))
         output_path = (RESULTS_DIR / (company["ticker"] + ".json")).as_posix()
         packet = {
             "ticker": company["ticker"],
@@ -189,6 +209,7 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
                 for k in ("cik", "ticker", "name", "exchange", "sector_bucket", "market_cap", "sic_description", "website", "hq_state")
             },
             "signals": slim_signals,
+            "angles": active_angles,
             "base_score": base_components(slim_signals),
             "hard_signals_present": sorted(
                 {s["type"] for s in slim_signals}
@@ -217,9 +238,10 @@ def commit(run_id: str | None = None) -> dict:
     threshold = float(cfg.get("qualify_threshold", 65))
     floor = float(cfg.get("disqualify_below", 45))
     hard = set(cfg.get("hard_signals", []))
+    require_angle = bool(cfg.get("require_angle", True))
     run_id = run_id or time.strftime("%Y%m%d-%H%M%S")
 
-    summary = {"qualified": [], "review": [], "disqualified": [], "invalid": [], "orphan": []}
+    summary = {"qualified": [], "review": [], "disqualified": [], "invalid": [], "orphan": [], "kept": []}
     archive = ARCHIVE_DIR / run_id
     archive.mkdir(parents=True, exist_ok=True)
 
@@ -249,6 +271,26 @@ def commit(run_id: str | None = None) -> dict:
         has_hard = bool(signal_types & hard)
         total = verdict.total
 
+        packet_fps = {a["fingerprint"] for a in packet.get("angles", [])}
+        if verdict.primary_angle and verdict.primary_angle.fingerprint not in packet_fps:
+            verdict.primary_angle = None
+        verdict.angle_ranking = [r for r in verdict.angle_ranking if r.fingerprint in packet_fps]
+        has_angle = bool(packet.get("angles"))
+
+        gate_reason = ""
+        if total >= threshold and has_hard and (has_angle or not require_angle):
+            new_status, bucket = Status.qualified, "qualified"
+        elif total < floor:
+            new_status, bucket = Status.disqualified, "disqualified"
+        else:
+            new_status, bucket = Status.scored, "review"
+            if total >= threshold and has_hard and not has_angle:
+                gate_reason = "no_active_angle"
+
+        # tightened gate never demotes accounts already past qualification
+        if company.get("status") in ("qualified", "contacts_found"):
+            new_status, bucket = Status(company["status"]), "kept"
+
         db.insert_score({
             "company_cik": company["cik"],
             "run_id": run_id,
@@ -264,17 +306,17 @@ def commit(run_id: str | None = None) -> dict:
             "why_now": verdict.why_now,
             "evidence_cited": verdict.evidence_cited,
             "confidence": verdict.confidence,
+            "angle_ranking": [r.model_dump(mode="json") for r in verdict.angle_ranking],
+            "primary_angle": verdict.primary_angle.model_dump(mode="json") if verdict.primary_angle else None,
+            "gate_reason": gate_reason,
             "model": "claude-code/haiku-subagent",
         })
 
-        if total >= threshold and has_hard:
-            new_status, bucket = Status.qualified, "qualified"
-        elif total < floor:
-            new_status, bucket = Status.disqualified, "disqualified"
-        else:
-            new_status, bucket = Status.scored, "review"
         db.set_status(company["cik"], new_status, profile=verdict.profile.value)
-        summary[bucket].append({"ticker": ticker, "total": total, "profile": verdict.profile.value})
+        item = {"ticker": ticker, "total": total, "profile": verdict.profile.value}
+        if gate_reason:
+            item["gate_reason"] = gate_reason
+        summary[bucket].append(item)
 
         shutil.move(str(result_file), archive / result_file.name)
         shutil.move(str(packet_file), archive / f"packet_{ticker}.json")

@@ -392,10 +392,12 @@ def score(
             console.print("No results in data/scoring_results/ — run the /score skill first.")
             raise typer.Exit(1)
         summary = scoring.commit()
-        for bucket in ("qualified", "review", "disqualified"):
+        for bucket in ("qualified", "review", "disqualified", "kept"):
             items = summary[bucket]
             console.print(f"[bold]{bucket}[/bold] ({len(items)}): " + ", ".join(
-                f"{i['ticker']}={i['total']}({i['profile']})" for i in items))
+                f"{i['ticker']}={i['total']}({i['profile']})"
+                + (f" [{i['gate_reason']}]" if i.get("gate_reason") else "")
+                for i in items))
         if summary["invalid"]:
             console.print(f"[red]invalid results (fix + rerun): {summary['invalid']}[/red]")
         if summary["orphan"]:
