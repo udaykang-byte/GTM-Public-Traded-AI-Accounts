@@ -26,6 +26,12 @@ uv run python -m pipeline score --prepare
 #   -> /score skill spawns Haiku subagents -> results land in data/scoring_results/
 uv run python -m pipeline score --commit
 
+# 3b. Deep tier — richer evidence + outreach angles for review-band/qualified
+uv run python -m pipeline enrich --source deep --dry-run   # preview selection
+uv run python -m pipeline enrich --source deep --limit 15  # capped, paid
+uv run python -m pipeline score --prepare --statuses scored  # rescore with angles
+#   -> /score skill -> score --commit
+
 # 4. Contacts for qualified accounts
 uv run python -m pipeline people --limit 5
 
@@ -51,6 +57,7 @@ uv run python -m pipeline export                 # data/exports/qualified.csv
   crawls SIC codes for the whole universe once — 15–20 min, then cached).
 - Parallel: ~1 task per company per enrich, 1 per company for people. Caps:
   `enrich.parallel.max_tasks_per_run` (25), `people.max_companies_per_run` (10).
+- Deep tier: 1 Parallel task per company, capped at enrich.deep.max_tasks_per_run (15).
 - LLM scoring: zero API cost in v1 (Claude Code Haiku subagents). v2 flips to
   OpenRouter: `score --provider openrouter` once `OPENROUTER_API_KEY` is set.
 

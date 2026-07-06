@@ -40,6 +40,7 @@ Three kinds of state, three owners:
 | State | Owner | Lifetime |
 |-------|-------|----------|
 | Company records, signals, scores, contacts, run history | Supabase (`companies`, `signals`, `scores`, `contacts`, `runs`) | Durable — the source of truth |
+| Outreach angles (dated structured events) | Supabase (`angles`) | Durable — deduped by fingerprint, never bulk-wiped |
 | EDGAR responses, SIC crawl, market caps | `data/cache/` | Regenerable; safe to delete (first rebuild is slow) |
 | Scoring packets and verdicts in flight | `data/scoring_queue/`, `data/scoring_results/`, archived to `data/scoring_archive/` | Per scoring run |
 
@@ -59,6 +60,8 @@ All code lives in `src/pipeline/` — one module per responsibility:
 | `parallel_signals.py` | P1–P6 collector: one structured research task per company |
 | `scoring.py` | Deterministic base score, packet build (`_shared.json` + per-company), verdict validation, qualify/disqualify transitions |
 | `llm.py` | Scoring providers: v1 packet contract for Haiku subagents, v2 OpenRouter |
+| `angles.py` | Angle freshness/strength/fingerprints, deep-tier selection |
+| `funding_events.py` | EDGAR funding-event collector → funding angles |
 | `people.py` | Contact discovery for qualified accounts via Parallel |
 
 Dependency direction is strictly inward: collectors and `people.py` depend on
@@ -81,6 +84,10 @@ pre-filtered by index item metadata so only relevant filings are fetched.
 Parallel enrichment fans out one batch of structured tasks per run, capped by
 `enrich.parallel.max_tasks_per_run`, and a single failed task doesn't sink the
 batch. Company moves to `status=enriched`.
+
+A deep tier (enrich --source deep) runs for companies at/near the qualify bar: one richer
+Parallel task (capped by enrich.deep.max_tasks_per_run) plus a free EDGAR funding scan,
+producing angle rows. The qualify gate (scoring) then requires ≥1 active angle.
 
 **score** — two phases with a human/LLM step in between:
 

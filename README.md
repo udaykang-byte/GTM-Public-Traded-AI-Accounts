@@ -105,7 +105,7 @@ All commands run through `uv run python -m pipeline <command>`:
 | `status` | Funnel counts per stage (`--brief` for one line) |
 | `discover` | Screen the SEC universe for micro-cap sector matches and seed them |
 | `ingest TICK1,TICK2` | Add specific companies (or `--csv file.csv` with a `ticker` column) |
-| `enrich --source edgar\|parallel` | Collect signals (EDGAR is free — run it first) |
+| `enrich --source edgar\|parallel\|deep` | Collect signals (EDGAR free; parallel/deep are paid + capped) |
 | `score --prepare` / `--commit` | Build scoring packets → commit verdicts + qualify |
 | `people` | Find decision-makers for qualified accounts |
 | `export` | Write qualified accounts + contacts to `data/exports/qualified.csv` |
@@ -132,6 +132,8 @@ total = intent(≤30) + capability_gap(≤25) + timing(≤25) + commercial_fit(�
 An LLM scorer reviews the deterministic base math and may deviate with justification.
 **Qualify**: total ≥ 65 AND at least one hard signal. **Disqualify**: total < 45.
 In between, the company stays in the review band for a human call.
+v2 tightens the gate: qualified also requires at least one fresh, structured outreach angle
+(funding event, leadership hire, or AI move) — see docs/SIGNALS.md.
 
 Full detection logic and weights: [docs/SIGNALS.md](docs/SIGNALS.md) and
 `config/settings.yaml`.

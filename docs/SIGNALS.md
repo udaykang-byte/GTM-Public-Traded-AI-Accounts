@@ -46,3 +46,20 @@ Deterministic base score = capped sum of signal weights per component. The LLM
 scorer (Haiku subagent) sees the base math and may deviate with justification.
 Qualify: `total ≥ 65` AND ≥1 hard signal. Disqualify: `total < 45`. Between:
 stays `scored` — human review band. All thresholds in `config/settings.yaml`.
+
+## Outreach angles (v2)
+
+Angles are dated, structured outreach events stored in the `angles` table —
+separate from signals (signals feed scoring; angles feed outreach copy). One
+row per event, deduped by fingerprint, never bulk-wiped. Freshness windows and
+strength decay: `config/settings.yaml` → `angles`.
+
+| Family | Sources | Typed fields | Copy angle |
+|--------|---------|--------------|------------|
+| funding | 8-K 3.02/1.01, S-3, 424B (EDGAR); news color (Parallel) | amount_usd, instrument, announced, use_of_proceeds, filing_type | "You just raised — deploy it on growth efficiently" |
+| leadership | deep Parallel | role, person_name, start_date, first_in_role, mandate_quote | "New exec's first-100-days agenda" |
+| ai_move | deep Parallel | initiative, move_type, partner, exec_quote, announced | "You're investing in AI — accelerate with specialists" |
+
+**Qualify gate (v2)**: total ≥ 65 AND ≥1 hard signal AND ≥1 active (fresh)
+angle. Blocked companies stay in the review band with `gate_reason:
+no_active_angle` on the score row. Toggle: `scoring.require_angle`.

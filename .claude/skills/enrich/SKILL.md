@@ -33,3 +33,21 @@ Ground rules:
 - Timing: Parallel tasks are created up front and polled together, so a full 25-company batch ≈ its slowest single task (~3–5 min). EDGAR batches run at SEC-polite rates — 8-Ks are filtered by index metadata, so expect seconds per company plus 10-K parsing.
 
 After running: show a compact table (ticker → signals found, strongest signal, evidence snippet), note failures, suggest `/score` when a decent batch is enriched.
+
+## Deep tier
+
+Run **after** scoring for companies at/near the qualify bar — before outreach.
+
+```bash
+uv run python -m pipeline enrich --source deep --dry-run   # see which companies qualify
+uv run python -m pipeline enrich --source deep --limit 15  # capped, paid batch
+```
+
+Deep tier creates one richer Parallel task per company (e.g., executive moves, AI
+investment patterns) plus a free EDGAR scan for funding events, producing structured
+`angles` rows (funding raises, leadership hires, AI moves) instead of signals.
+
+Ground rules:
+- **Always `--dry-run` first** to preview which companies will be selected (filtered by status + score + freshness).
+- **Cap is strict**: `enrich.deep.max_tasks_per_run` (default 15). Never loop around it.
+- Results feed the `/score` rescoring step: `score --prepare --statuses scored` (review band) before re-running the subagent.

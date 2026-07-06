@@ -13,6 +13,8 @@ uv run python -m pipeline score --prepare
 
 Writes one JSON packet per company to `data/scoring_queue/` (signals + evidence + base-score math + service catalog + rubric + required output schema). Prints how many packets are queued.
 
+**v2 note**: Packets may also carry an `angles` list (dated, structured outreach events from deep enrichment). The subagent verdict must return `angle_ranking` (fingerprint/family/message_hook) and `primary_angle` (fingerprint/family/why_this_angle) per the packet's `output_schema` — copy fingerprints exactly from the packet, use `null` or `[]` when no angles are present.
+
 ## Step 2 — spawn Haiku subagents to reason
 
 List the queued packets (`data/scoring_queue/*.json` — ignore `_shared.json`, it is
@@ -44,7 +46,11 @@ Rules:
 uv run python -m pipeline score --commit
 ```
 
-Validates every result against the schema (invalid ones are reported — re-run their subagent), writes scores to Supabase, sets `profile`, and transitions status: `qualified` (total ≥ threshold AND ≥1 hard signal), `disqualified` (total < floor), else stays `scored` for human review. Processed files are archived to `data/scoring_archive/`.
+Validates every result against the schema (invalid ones are reported — re-run their subagent), writes scores to Supabase, sets `profile`, and transitions status: `qualified` (total ≥ threshold AND ≥1 hard signal AND ≥1 active angle in v2), `disqualified` (total < floor), else stays `scored` for human review. Processed files are archived to `data/scoring_archive/`.
+
+**v2 output**: `--commit` now includes a `kept` bucket (already-qualified/contacts_found companies, never demoted) and `[no_active_angle]` markers for companies blocked by the angle gate. Export now includes angle columns: `angle_ready`, `angle_family`, `primary_angle`, `message_hook`.
+
+**Rescoring the review band**: After running `/enrich --source deep`, prepare packets with `score --prepare --statuses scored` to re-score companies in the review band with angles.
 
 ## Step 4 — report
 
