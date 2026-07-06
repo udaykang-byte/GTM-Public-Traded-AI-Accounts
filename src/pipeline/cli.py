@@ -173,9 +173,65 @@ def _print_signals(ticker: str, signals: list, errors: list[str]):
         console.print(f"[yellow]  {ticker}: {e}[/yellow]")
 
 
+def _enrich_deep(limit: int | None, ticker: str | None, dry_run: bool):
+    """Deep tier: score-gated, cost-capped. Deep Parallel task (paid) + EDGAR
+    funding scan (free) for companies at/near the qualify bar."""
+    from pipeline import angles as angles_mod
+    from pipeline import db, funding_events
+    from pipeline.config import SETTINGS
+
+    if ticker:
+        row = db.get_company_by_ticker(ticker)
+        if not row:
+            raise typer.BadParameter(f"{ticker} not in pipeline — deep tier needs a scored company")
+        targets = [row]
+    else:
+        pool: list[dict] = []
+        for st in ("scored", "qualified", "contacts_found"):
+            pool.extend(db.get_companies(status=st))
+        totals = {int(c["cik"]): float((db.latest_score(c["cik"]) or {}).get("total") or 0) for c in pool}
+        cap = int(SETTINGS.get("enrich", {}).get("deep", {}).get("max_tasks_per_run", 15))
+        targets = angles_mod.select_deep_targets(pool, totals, min(limit or cap, cap))
+
+    if not targets:
+        console.print("No deep-tier candidates (statuses scored/qualified/contacts_found).")
+        return
+    if dry_run:
+        for c in targets:
+            console.print(f"[dim]{c['ticker']}: would run 1 deep Parallel task + EDGAR funding scan[/dim]")
+        console.print(f"[dim]dry run — {len(targets)} companies selected, nothing spent[/dim]")
+        return
+
+    from pipeline import parallel_signals
+    run_id = db.start_run("enrich:deep")
+    console.print(f"[dim]{len(targets)} deep Parallel tasks created up front, polled together…[/dim]")
+    deep_results = parallel_signals.collect_deep_batch(targets)
+
+    stats = {"companies": 0, "signals": 0, "angles": 0, "errors": 0}
+    for company in targets:
+        cik = int(company["cik"])
+        f_angles, f_errs = funding_events.collect(company)
+        sigs, p_angles, warns = deep_results.get(cik, ([], [], ["no deep result"]))
+        task_failed = any(w.startswith("deep task failed") or w.startswith("deep result parse failed") for w in warns)
+        if not task_failed:
+            # only replace on success — a failed task must not wipe prior parallel signals
+            db.replace_signals(cik, "parallel", sigs)
+        db.upsert_angles(f_angles + p_angles)
+        _print_signals(company["ticker"], sigs, f_errs + warns)
+        for a in f_angles + p_angles:
+            console.print(f"[dim]  angle [{a.family.value}] {a.headline[:70]} (strength {a.strength})[/dim]")
+        stats["companies"] += 1
+        stats["signals"] += len(sigs)
+        stats["angles"] += len(f_angles) + len(p_angles)
+        stats["errors"] += len(f_errs) + (1 if task_failed else 0)
+
+    db.finish_run(run_id, stats)
+    console.print(f"Done: {stats}")
+
+
 @app.command()
 def enrich(
-    source: str = typer.Option("edgar", "--source", help="edgar | parallel | all"),
+    source: str = typer.Option("edgar", "--source", help="edgar | parallel | all | deep"),
     limit: int = typer.Option(10, "--limit"),
     ticker: str = typer.Option(None, "--ticker", help="Single company (any status)"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -185,8 +241,12 @@ def enrich(
     from pipeline import db, universe
     from pipeline.config import SETTINGS
 
-    if source not in ("edgar", "parallel", "all"):
-        raise typer.BadParameter("--source must be edgar | parallel | all")
+    if source not in ("edgar", "parallel", "all", "deep"):
+        raise typer.BadParameter("--source must be edgar | parallel | all | deep")
+
+    if source == "deep":
+        _enrich_deep(limit=limit, ticker=ticker, dry_run=dry_run)
+        return
 
     targets: list[dict] = []
     if ticker:
@@ -236,15 +296,17 @@ def enrich(
         )
         targets = targets[:parallel_cap]
     run_id = None if dry_run else db.start_run(f"enrich:{source}")
-    stats = {"companies": 0, "signals": 0, "errors": 0}
+    stats = {"companies": 0, "signals": 0, "angles": 0, "errors": 0}
 
     edgar_by_cik: dict[int, tuple[list, list]] = {}
     parallel_by_cik: dict[int, tuple[list, list]] = {}
+    angles_by_cik: dict[int, tuple[list, list]] = {}
 
     if source in ("edgar", "all"):
-        from pipeline import edgar_signals
+        from pipeline import edgar_signals, funding_events
         for company in targets:
             edgar_by_cik[int(company["cik"])] = edgar_signals.collect(company)
+            angles_by_cik[int(company["cik"])] = funding_events.collect(company)
 
     if source in ("parallel", "all"):
         batch = targets[:parallel_cap]
@@ -272,9 +334,16 @@ def enrich(
                 # only replace on task success — a failed task must not wipe
                 # previously collected parallel signals
                 db.replace_signals(cik, "parallel", sigs_p)
+        f_angles, f_errs = angles_by_cik.get(cik, ([], []))
+        if not dry_run and f_angles:
+            db.upsert_angles(f_angles)
+        for a in f_angles:
+            console.print(f"[dim]  angle [funding] {a.headline[:70]}[/dim]")
+        stats["errors"] += len(f_errs)
         _print_signals(company["ticker"], sigs_e + sigs_p, errs_e + errs_p)
         stats["companies"] += 1
         stats["signals"] += len(sigs_e) + len(sigs_p)
+        stats["angles"] += len(f_angles)
         stats["errors"] += len(errs_e) + len(errs_p)
         if not dry_run and company.get("status") in (None, "new", "enriched"):
             db.set_status(cik, "enriched")
