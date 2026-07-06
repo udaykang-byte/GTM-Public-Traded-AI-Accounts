@@ -66,6 +66,28 @@ create table if not exists scores (
 create index if not exists scores_company_idx on scores (company_cik);
 -- migration for pre-existing installs (create-if-not-exists won't add columns)
 alter table scores add column if not exists why_now text not null default '';
+alter table scores add column if not exists angle_ranking jsonb not null default '[]'::jsonb;
+alter table scores add column if not exists primary_angle jsonb;
+alter table scores add column if not exists gate_reason text not null default '';
+
+create table if not exists angles (
+  id             bigint generated always as identity primary key,
+  company_cik    bigint not null references companies (cik) on delete cascade,
+  family         text not null check (family in ('funding','leadership','ai_move')),
+  headline       text not null,
+  details        jsonb not null default '{}'::jsonb,
+  evidence_url   text,
+  evidence_quote text,
+  event_date     date not null,
+  source         text not null check (source in ('edgar','parallel')),
+  strength       numeric not null default 0,
+  status         text not null default 'active' check (status in ('active','stale')),
+  fingerprint    text not null,
+  collected_at   timestamptz not null default now(),
+  unique (company_cik, fingerprint)
+);
+create index if not exists angles_company_idx on angles (company_cik);
+create index if not exists angles_family_idx on angles (family);
 
 create table if not exists contacts (
   id           bigint generated always as identity primary key,
@@ -110,3 +132,4 @@ alter table signals   enable row level security;
 alter table scores    enable row level security;
 alter table contacts  enable row level security;
 alter table runs      enable row level security;
+alter table angles    enable row level security;

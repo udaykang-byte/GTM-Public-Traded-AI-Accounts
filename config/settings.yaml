@@ -34,10 +34,15 @@ enrich:
     processor: base          # Parallel Task API processor tier (cost control)
     max_tasks_per_run: 25    # hard cap on Parallel task runs per enrich invocation
     poll_timeout_seconds: 600
+  deep:
+    max_tasks_per_run: 15    # deep Parallel tasks per run (score-gated tier)
+    processor: base
+    poll_timeout_seconds: 900
 
 scoring:
   qualify_threshold: 65      # total >= this AND >=1 hard signal -> qualified
   disqualify_below: 45      # total < this -> disqualified; between = stays 'scored' for review
+  require_angle: true        # qualified needs >=1 active outreach angle (v2 gate); false = v1 behavior
   hard_signals: [E1, E3, E4, E5, P1, P2, P3]
   # Dated event signals (E3/E4/E7/P3) keep full weight for `full_days`, then
   # decay linearly to `floor` x weight at their collection-window edge.
@@ -65,6 +70,18 @@ scoring:
     capability_gap: 25   # E6 P4 + absence-of-execution logic
     timing: 25           # E3 E4 E7
     commercial_fit: 20   # E5 E9 P1 P2 P5 + sector/band fit
+
+angles:
+  # outreach-angle freshness windows: event older than this -> stale, never
+  # satisfies the qualify gate, never ranks as primary
+  freshness_days:
+    funding: 365
+    leadership: 365
+    ai_move: 270
+  # strength = recency decay x evidence quality (angles.py)
+  strength:
+    full_days: 90
+    floor: 0.25
 
 people:
   max_companies_per_run: 10
