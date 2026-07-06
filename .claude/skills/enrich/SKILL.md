@@ -44,8 +44,9 @@ uv run python -m pipeline enrich --source deep --limit 15  # capped, paid batch
 ```
 
 Deep tier creates one richer Parallel task per company (e.g., executive moves, AI
-investment patterns) plus a free EDGAR scan for funding events, producing structured
-`angles` rows (funding raises, leadership hires, AI moves) instead of signals.
+investment patterns) plus a free EDGAR scan for funding events, refreshing the company's
+P1–P6 parallel signals and additionally producing structured outreach-angle rows (funding
+raises, leadership hires, AI moves).
 
 Ground rules:
 - **Always `--dry-run` first** to preview which companies will be selected (filtered by status + score + freshness).

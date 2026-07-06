@@ -141,8 +141,8 @@ Full detection logic and weights: [docs/SIGNALS.md](docs/SIGNALS.md) and
 ## Repository layout
 
 ```
-src/pipeline/        # cli, db, models, universe, edgar_signals,
-                     # parallel_signals, parallel_client, scoring, llm, people
+src/pipeline/        # cli, db, models, universe, edgar_signals, parallel_signals,
+                     # parallel_client, scoring, angles, funding_events, llm, people
 tests/               # pytest suite — fast unit tests, no network or DB needed
 config/settings.yaml # universe band, sector→SIC map, weights, thresholds, caps
 config/services.yaml # martechs.io service catalog (drives service-fit mapping)
