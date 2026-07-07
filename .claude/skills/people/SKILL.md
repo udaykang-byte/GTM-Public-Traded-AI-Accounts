@@ -31,4 +31,4 @@ After running:
 - Flag companies where key roles came back empty (tiny micro-caps often have no CMO — the CEO is the buyer).
 - Suggest `uv run python -m pipeline export` for a CSV of qualified accounts + contacts.
 
-This is where v1 ends — no outreach message generation or sending.
+Next stage: `/outreach` drafts per-contact message sequences from angles (v2). Still no sending or CRM push.

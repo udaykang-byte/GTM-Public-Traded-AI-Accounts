@@ -9,7 +9,9 @@ decision-maker contacts. State lives in Supabase; signal sources are SEC EDGAR
 
 `new → enriched → scored → qualified | disqualified → contacts_found`
 (status column on `companies`; between disqualify_below and qualify_threshold a
-company stays `scored` = human review band)
+company stays `scored` = human review band). After `contacts_found`, the
+`messages` stage drafts per-contact outreach sequences — no status change;
+coverage is derived from the `messages` table.
 
 ## Commands (always via uv)
 
@@ -22,11 +24,14 @@ uv run python -m pipeline enrich --source parallel --limit 10
 uv run python -m pipeline score --prepare   # packets -> data/scoring_queue/
 uv run python -m pipeline score --commit    # verdicts -> Supabase + qualify
 uv run python -m pipeline people --limit 5  # contacts for qualified accounts
-uv run python -m pipeline export            # qualified accounts + contacts CSV
+uv run python -m pipeline messages --prepare # per-contact packets -> data/message_queue/
+uv run python -m pipeline messages --commit  # QA gate -> messages table (drafts)
+uv run python -m pipeline export --messages  # qualified.csv + messages.csv
 ```
 
-Skills exist for each stage: /ingest /discover /enrich /score /people /status.
-Prefer them — they encode the correct orchestration (especially /score).
+Skills exist for each stage: /ingest /discover /enrich /score /people /outreach
+/status. Prefer them — they encode the correct orchestration (especially /score
+and /outreach).
 
 ## Rules
 
@@ -42,22 +47,29 @@ Prefer them — they encode the correct orchestration (especially /score).
   `enrich.parallel.max_tasks_per_run` and `people.max_companies_per_run` in
   `config/settings.yaml`. Use `--dry-run` first on new batches. Never loop
   Parallel calls outside those caps.
-- **LLM costs (v1)**: bulk scoring reasoning runs through Claude Code **Haiku
-  subagents** (see /score skill) — never call paid LLM APIs from the pipeline
-  in v1. `llm.py` has the OpenRouter provider for production later.
+- **LLM costs (v1)**: bulk scoring reasoning AND outreach copywriting run
+  through Claude Code **Haiku subagents** (see /score and /outreach skills) —
+  never call paid LLM APIs from the pipeline in v1. `llm.py` has the OpenRouter
+  provider for production later.
+- **Outreach copy**: rules live in `config/outbound_copywriter.md` (Uday's
+  voice decisions — propose changes, don't silently edit). The QA gate in
+  `messages.py` (`BANNED_WORDS`, subject shape, packet-facts-only) is never
+  relaxed to make a draft pass; fix the draft. Always spot-check
+  `unverified number` warnings before export.
 - **Qualification**: thresholds in `config/settings.yaml` are human decisions —
   propose changes, don't silently edit.
-- **Scope**: v1 stops at qualified accounts + contacts. No outreach message
-  generation, no sending, no CRM pushes.
+- **Scope**: pipeline stops at drafted outreach sequences (v2 sub-project 2).
+  No sending, no CRM pushes — that's sub-project 3.
 - **Verification**: after changing a collector, verify with
   `enrich --ticker X --dry-run` on a known company before batch runs.
 
 ## Layout
 
 - `src/pipeline/` — cli, db, models, universe, edgar_signals, parallel_signals,
-  scoring, llm, people
+  scoring, llm, people, messages
 - `config/settings.yaml` — universe band, sector→SIC map, weights, thresholds, caps
 - `config/services.yaml` — martechs.io service catalog (drives service-fit mapping)
+- `config/outbound_copywriter.md` — copy framework the /outreach subagents follow
 - `sql/schema.sql` — Supabase DDL (apply via SUPABASE_DB_URL or SQL editor)
 - `docs/SIGNALS.md` — signal taxonomy E1–E9 / P1–P6 with detection logic
 - `docs/PIPELINE.md` — runbook

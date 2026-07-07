@@ -41,8 +41,10 @@ Three kinds of state, three owners:
 |-------|-------|----------|
 | Company records, signals, scores, contacts, run history | Supabase (`companies`, `signals`, `scores`, `contacts`, `runs`) | Durable — the source of truth |
 | Outreach angles (dated structured events) | Supabase (`angles`) | Durable — deduped by fingerprint, never bulk-wiped |
+| Drafted outreach sequences | Supabase (`messages`) | Durable — upserted per (contact, angle); status tracks draft → sent |
 | EDGAR responses, SIC crawl, market caps | `data/cache/` | Regenerable; safe to delete (first rebuild is slow) |
 | Scoring packets and verdicts in flight | `data/scoring_queue/`, `data/scoring_results/`, archived to `data/scoring_archive/` | Per scoring run |
+| Message packets and drafts in flight | `data/message_queue/`, `data/message_results/`, archived to `data/message_archive/` | Per message run |
 
 ## Module map
 
@@ -63,10 +65,11 @@ All code lives in `src/pipeline/` — one module per responsibility:
 | `angles.py` | Angle freshness/strength/fingerprints, deep-tier selection |
 | `funding_events.py` | EDGAR funding-event collector → funding angles |
 | `people.py` | Contact discovery for qualified accounts via Parallel |
+| `messages.py` | Outreach drafting: per-contact packet build, deterministic copy QA gate, draft persistence |
 
-Dependency direction is strictly inward: collectors and `people.py` depend on
-`db.py`/`models.py`/`config.py`, never on each other. `cli.py` is the only
-orchestrator.
+Dependency direction is strictly inward: collectors, `people.py`, and
+`messages.py` depend on `db.py`/`models.py`/`config.py`, never on each other.
+`cli.py` is the only orchestrator.
 
 ## Stage-by-stage data flow
 
@@ -108,8 +111,21 @@ producing angle rows. The qualify gate (scoring) then requires ≥1 active angle
 decision-makers (roles chosen per matched service from `config/services.yaml`),
 capped by `people.max_companies_per_run`. Company moves to `contacts_found`.
 
+**messages** — v2 sub-project 2, same packet mechanism as scoring: `messages
+--prepare` writes one packet per contact (company + contact + verdict + fresh
+angles + role-matched service) to `data/message_queue/` with the copywriter
+framework (`config/outbound_copywriter.md`) in `_shared.json`; the `/outreach`
+skill's Haiku subagents write 4-step sequences; `messages --commit` runs a
+deterministic QA gate (banned words, subject shape, placeholders, packet-fact
+checks — hard failures stay queued for re-spawn) and upserts drafts into
+`messages` keyed by (contact, angle). Companies without a fresh angle are
+skipped. No status transition — coverage is derived, and per-sequence state
+lives on `messages.status` (draft → approved/exported/sent in sub-project 3).
+
 **export** — joins qualified companies with contacts into
-`data/exports/qualified.csv`. End of v1 scope.
+`data/exports/qualified.csv`; `--messages` adds `data/exports/messages.csv`
+(one row per sequence step). Generation is where v2 sub-project 2 stops — no
+sending, no CRM push.
 
 ## Status machine
 

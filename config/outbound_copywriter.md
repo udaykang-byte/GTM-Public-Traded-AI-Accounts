@@ -149,6 +149,8 @@ invented result. Three allowed moves:
 ### K — Kick-off CTA
 One low-friction question, answerable in under 10 seconds. Soft and no-oriented
 (premium positioning). Never a calendar link, never a meeting ask before step 4.
+ONE question mark per email — don't stack calibrated questions; a stack reads
+as an interrogation and gives the reader an excuse to answer none of them.
 
 Good: "Are you seeing this too?" · "Worth sending over the two-page gap map? No
 pitch attached." · "Would it be a terrible idea to share how we'd sequence this?"

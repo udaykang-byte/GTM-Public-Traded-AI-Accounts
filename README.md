@@ -18,6 +18,9 @@ new → enriched → scored → qualified | disqualified → contacts_found
 - **qualified / disqualified** — threshold decision (≥65 total AND ≥1 hard signal)
 - **contacts_found** — decision-makers resolved for qualified accounts, ready to export
 
+From `contacts_found`, the `messages` stage drafts a 4-step outreach sequence per
+contact (built on each company's fresh outreach angles) — drafts only; no sending.
+
 ## Architecture at a glance
 
 ```mermaid
@@ -33,6 +36,7 @@ flowchart LR
         ENR[enrich]
         SCORE[score]
         PEOPLE[people]
+        MSG[messages]
         EXP[export]
     end
 
@@ -46,13 +50,14 @@ flowchart LR
     ENR --> DB
     SCORE --> DB
     PEOPLE --> DB
+    MSG --> DB
     DB --> EXP
-    EXP --> CSV[qualified.csv]
+    EXP --> CSV[qualified.csv + messages.csv]
 ```
 
-State lives in **Supabase** (five tables: `companies`, `signals`, `scores`, `contacts`,
-`runs`). Everything else — EDGAR caches, scoring queues, exports — is regenerable local
-state under `data/` (gitignored). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+State lives in **Supabase** (six tables: `companies`, `signals`, `scores`, `angles`,
+`contacts`, `messages`, plus `runs`). Everything else — EDGAR caches, scoring and
+message queues, exports — is regenerable local state under `data/` (gitignored). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
 the module map and design decisions.
 
 ## Quickstart
@@ -108,7 +113,8 @@ All commands run through `uv run python -m pipeline <command>`:
 | `enrich --source edgar\|parallel\|deep` | Collect signals (EDGAR free; parallel/deep are paid + capped) |
 | `score --prepare` / `--commit` | Build scoring packets → commit verdicts + qualify |
 | `people` | Find decision-makers for qualified accounts |
-| `export` | Write qualified accounts + contacts to `data/exports/qualified.csv` |
+| `messages --prepare` / `--commit` | Draft per-contact outreach sequences (Haiku subagents + QA gate) |
+| `export` | Write qualified accounts + contacts to `data/exports/qualified.csv` (`--messages` adds `messages.csv`) |
 | `promote TICK1,TICK2` | Move review-band companies to qualified by hand |
 | `prune` | Remove stale/out-of-scope companies (`--dry-run` first) |
 | `apply-schema` | Apply `sql/schema.sql` to Supabase |
@@ -142,10 +148,12 @@ Full detection logic and weights: [docs/SIGNALS.md](docs/SIGNALS.md) and
 
 ```
 src/pipeline/        # cli, db, models, universe, edgar_signals, parallel_signals,
-                     # parallel_client, scoring, angles, funding_events, llm, people
+                     # parallel_client, scoring, angles, funding_events, llm, people,
+                     # messages
 tests/               # pytest suite — fast unit tests, no network or DB needed
 config/settings.yaml # universe band, sector→SIC map, weights, thresholds, caps
 config/services.yaml # martechs.io service catalog (drives service-fit mapping)
+config/outbound_copywriter.md  # copy framework the /outreach subagents follow
 sql/schema.sql       # Supabase DDL
 docs/                # runbook, signal taxonomy, architecture
 data/                # gitignored: caches, scoring queue/results, exports
@@ -157,8 +165,9 @@ data/                # gitignored: caches, scoring queue/results, exports
 - **EDGAR is free** — throttled to ≤8 req/s and cached under `data/cache/`.
 - **Parallel.ai is paid** — every call path respects the per-run caps in
   `config/settings.yaml`. Use `--dry-run` before new batches.
-- **LLM scoring costs nothing in v1** — reasoning runs through Claude Code Haiku
-  subagents. The OpenRouter provider in `src/pipeline/llm.py` is the v2 path.
+- **LLM scoring and message drafting cost nothing in v1** — reasoning and copy run
+  through Claude Code Haiku subagents. The OpenRouter provider in
+  `src/pipeline/llm.py` is the v2 path.
 
 ## Contributing
 
@@ -169,5 +178,6 @@ If you use Claude Code, the repo ships with stage skills (`/status`, `/enrich`,
 
 ---
 
-Internal martechs.io project. v1 scope stops at qualified accounts + contacts —
-no outreach generation, no sending, no CRM pushes.
+Internal martechs.io project. Scope stops at drafted outreach sequences
+(qualified accounts + contacts + per-contact message drafts) — no sending,
+no CRM pushes (that's v2 sub-project 3).
