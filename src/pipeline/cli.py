@@ -64,6 +64,13 @@ def status(brief: bool = typer.Option(False, "--brief", help="One-line funnel su
             rt.add_row(r["stage"], str(r["started_at"])[:19], json.dumps(r.get("stats") or {})[:60])
         console.print(rt)
 
+    msgs = db.all_messages()
+    if msgs:
+        cf = db.get_companies(status="contacts_found")
+        covered = sum(1 for c in cf if int(c["cik"]) in msgs)
+        n_seq = sum(len(v) for v in msgs.values())
+        console.print(f"sequences drafted: {n_seq} ({covered} of {len(cf)} contacts_found companies covered)")
+
 
 @app.command()
 def ingest(
@@ -473,8 +480,71 @@ def people(
 
 
 @app.command()
-def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")):
-    """CSV of qualified accounts + contacts (one row per contact)."""
+def messages(
+    prepare: bool = typer.Option(False, "--prepare"),
+    commit: bool = typer.Option(False, "--commit"),
+    limit: int = typer.Option(None, "--limit", help="Max contact packets to prepare"),
+    ticker: str = typer.Option(None, "--ticker", help="Single company (any status)"),
+    force: bool = typer.Option(False, "--force", help="Regenerate even if a draft exists for the angle"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="With --prepare: list target contacts, write nothing"),
+):
+    """Draft 4-step outreach sequences per contact. v1: --prepare, then the /outreach skill, then --commit."""
+    from pipeline import db
+    from pipeline import messages as messages_mod
+
+    if prepare:
+        if ticker:
+            row = db.get_company_by_ticker(ticker)
+            if not row:
+                raise typer.BadParameter(f"{ticker} not in pipeline")
+            if row["status"] != "contacts_found":
+                console.print(f"[yellow]{ticker} status is '{row['status']}' (not contacts_found) — preparing anyway[/yellow]")
+        paths, skips = messages_mod.prepare(limit=limit, ticker=ticker, force=force, dry_run=dry_run)
+        verb = "Would prepare" if dry_run else "Prepared"
+        console.print(f"{verb} {len(paths)} message packets in data/message_queue/ (one per contact)")
+        for p in paths:
+            console.print(f"  {p}")
+        for reason, items in skips.items():
+            if items:
+                console.print(f"[dim]skipped ({reason}): {', '.join(items)}[/dim]")
+        if paths and not dry_run:
+            console.print("Next: use the /outreach skill (Haiku subagents), then `messages --commit`.")
+        return
+
+    if commit:
+        pending = messages_mod.pending_results()
+        if not pending:
+            console.print("No results in data/message_results/ — run the /outreach skill first.")
+            raise typer.Exit(1)
+        rid = db.start_run("messages")
+        summary = messages_mod.commit()
+        db.finish_run(rid, {
+            "written": len(summary["written"]), "invalid": len(summary["invalid"]),
+            "orphan": len(summary["orphan"]),
+        })
+        for item in summary["written"]:
+            console.print(f"[bold]{item['ticker']}[/bold] {item['contact']} — {item['archetype']} / {item['service']}")
+        for stem, warns in summary["warnings"].items():
+            for w in warns:
+                console.print(f"[yellow]  {stem}: {w}[/yellow]")
+        if summary["invalid"]:
+            console.print("[red]failed QA (re-spawn their subagents, then commit again):[/red]")
+            for item in summary["invalid"]:
+                console.print(f"[red]  {item}[/red]")
+        if summary["orphan"]:
+            console.print(f"[yellow]orphan results (no packet): {summary['orphan']}[/yellow]")
+        console.print(f"Drafted {len(summary['written'])} sequences -> `pipeline export --messages` when ready.")
+        return
+
+    console.print("Use --prepare or --commit.")
+
+
+@app.command()
+def export(
+    out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out"),
+    messages: bool = typer.Option(False, "--messages", help="Also write data/exports/messages.csv (one row per step)"),
+):
+    """CSV of qualified accounts + contacts; --messages adds drafted sequences."""
     from pipeline import angles as angles_mod
     from pipeline import db
 
@@ -515,15 +585,53 @@ def export(out: Path = typer.Option(Path("data/exports/qualified.csv"), "--out")
             for c in contacts:
                 rows.append({**base, "contact": c["name"], "title": c["title"],
                              "linkedin": c.get("linkedin_url") or "", "email": c.get("email") or ""})
-    if not rows:
+    if rows:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "w", newline="") as fh:
+            writer = csv_mod.DictWriter(fh, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        console.print(f"Wrote {len(rows)} rows -> {out}")
+    else:
         console.print("Nothing qualified yet.")
+
+    if not messages:
         return
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with open(out, "w", newline="") as fh:
-        writer = csv_mod.DictWriter(fh, fieldnames=list(rows[0].keys()))
+    msg_by_cik = db.all_messages()
+    if not msg_by_cik:
+        console.print("No drafted sequences yet — run `messages --prepare` + /outreach first.")
+        return
+    companies_by_cik = {int(c["cik"]): c for c in db.get_companies()}
+    msg_rows = []
+    for cik, msgs in sorted(msg_by_cik.items()):
+        comp = companies_by_cik.get(cik, {})
+        contacts_by_id = {c.get("id"): c for c in db.get_contacts(cik)}
+        angle_by_fp = {a["fingerprint"]: a for a in db.get_angles(cik)}
+        for m in msgs:
+            # email/linkedin joined live via contact_id so later email-finding
+            # enriches this export for free; name/title from the snapshot
+            c = contacts_by_id.get(m.get("contact_id"), {})
+            headline = (angle_by_fp.get(m.get("angle_fingerprint")) or {}).get("headline", "")
+            for s in m.get("steps") or []:
+                msg_rows.append({
+                    "ticker": m["ticker"], "company": comp.get("name", ""),
+                    "contact": m["contact_name"], "title": m["contact_title"],
+                    "email": c.get("email") or "", "linkedin": c.get("linkedin_url") or "",
+                    "role_bucket": c.get("role_bucket") or "",
+                    "archetype": m["archetype"], "service": m["service"],
+                    "angle_family": m["angle_family"], "angle_headline": headline,
+                    "step": s.get("step"), "day_offset": s.get("day_offset"),
+                    "subject": s.get("subject") or "", "body": s.get("body") or "",
+                    "cta_type": s.get("cta_type") or "",
+                    "qa_warnings": "; ".join(m.get("qa_warnings") or []),
+                    "status": m.get("status"), "created_at": m.get("created_at"),
+                })
+    msg_out = out.parent / "messages.csv"
+    with open(msg_out, "w", newline="") as fh:
+        writer = csv_mod.DictWriter(fh, fieldnames=list(msg_rows[0].keys()))
         writer.writeheader()
-        writer.writerows(rows)
-    console.print(f"Wrote {len(rows)} rows -> {out}")
+        writer.writerows(msg_rows)
+    console.print(f"Wrote {len(msg_rows)} step rows ({sum(len(v) for v in msg_by_cik.values())} sequences) -> {msg_out}")
 
 
 @app.command()

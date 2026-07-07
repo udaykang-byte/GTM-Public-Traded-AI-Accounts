@@ -1,0 +1,77 @@
+---
+name: outreach
+description: Draft 4-step SPARK outreach sequences per contact for companies with contacts + fresh angles, via cheap Haiku subagents (no API cost). Use after /people, or when asked to write outreach, emails, or sequences.
+---
+
+# /outreach — draft sequences (v1: Haiku subagents, zero API cost)
+
+Generation only: no sending, no CRM push. Copy rules live in
+`config/outbound_copywriter.md` (Uday edits it like settings.yaml).
+
+## Step 1 — prepare packets
+
+```bash
+uv run python -m pipeline messages --prepare
+```
+
+Writes ONE packet PER CONTACT to `data/message_queue/` (`TICKER__contact-slug.json`),
+plus `_shared.json` (copywriter framework + services catalog + output schema + hard
+rules). Companies without a fresh angle are skipped and reported — never message on
+a stale hook. Use `--ticker X` for one company, `--force` to regenerate existing drafts.
+
+## Step 2 — spawn Haiku subagents to write copy
+
+List queued packets (`data/message_queue/*.json`, ignore `_shared.json`), then spawn
+**Agent tool subagents with `model: haiku`**, giving each **up to 3 packet paths**
+(prose needs smaller batches than scoring's 5). Spawn batches in parallel (single
+message, multiple Agent calls). Each subagent prompt must say:
+
+> You are a senior outbound copywriter for a premium AI-services firm that has NO
+> citable customer proof points. First read `data/message_queue/_shared.json` ONCE —
+> it holds the copywriter framework, services catalog, output schema, and hard rules
+> shared by every packet. Then for EACH packet file listed below: (1) Read the JSON
+> packet. (2) Write a 4-step sequence for that ONE contact, framed for their role,
+> using ONLY facts in the packet — never invent metrics, client names, or events.
+> (3) Write it as JSON matching `output_schema` EXACTLY to the packet's
+> `output_path` (subject on step 1 only, all lowercase 3-5 words; bodies 60-120
+> words, fully rendered with real names, no merge variables, sign off "Uday").
+> Process every packet. Reply only one line per packet: `TICKER contact archetype`.
+>
+> Packets: <absolute paths>
+
+Rules:
+- `model: haiku` always — never write copy in the main conversation.
+- If a subagent fails on a packet, re-spawn just that packet.
+
+## Step 3 — commit + QA re-spawn loop
+
+```bash
+uv run python -m pipeline messages --commit
+```
+
+Validates each result (schema + deterministic copy QA: subject shape, word counts,
+banned words, one question CTA, no links in step 1, no placeholders, angle/contact
+must match the packet) and upserts passing sequences to the `messages` table as
+drafts. **Failed results stay in `data/message_results/`** with their packet still
+queued.
+
+If `failed QA` items are reported: re-spawn ONE Haiku subagent per failure, appending
+the QA error text to the prompt ("Your previous draft failed QA: <errors>. Read the
+packet and _shared.json again, rewrite the FULL sequence fixing these, overwrite
+<output_path>."), then run `messages --commit` again. **Max 2 retry rounds** — report
+survivors to the user instead of looping.
+
+## Step 4 — report
+
+Summarize per company: contact, archetype, service, and any QA warnings **verbatim**
+— especially `unverified number` (tell the user to spot-check those bodies before
+export; the digit-scan is the last automated line of defense against invented
+metrics). Then suggest:
+
+```bash
+uv run python -m pipeline export --messages   # data/exports/messages.csv, one row per step
+```
+
+Never edit copy yourself in the main conversation, and never relax QA gates —
+propose changes to `config/settings.yaml` (`messages:`) or
+`config/outbound_copywriter.md` to the user instead.

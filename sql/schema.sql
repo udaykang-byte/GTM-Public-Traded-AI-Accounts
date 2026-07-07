@@ -104,6 +104,36 @@ create table if not exists contacts (
 );
 create index if not exists contacts_company_idx on contacts (company_cik);
 
+-- Drafted outreach sequences (v2 sub-project 2). One row per sequence
+-- (4 steps as jsonb); contact name/title are snapshots because contacts has
+-- no unique key and /people re-runs can re-insert rows. angle_fingerprint is
+-- the stable natural key into angles, same as scores.primary_angle.
+-- status pre-provisions sub-project 3 (CRM push); this stage only writes 'draft'.
+create table if not exists messages (
+  id                bigint generated always as identity primary key,
+  company_cik       bigint not null references companies (cik) on delete cascade,
+  contact_id        bigint not null references contacts (id) on delete cascade,
+  contact_name      text not null,
+  contact_title     text not null,
+  ticker            text not null,
+  archetype         text not null check (archetype in
+                    ('observation','creative_ideas','referral_ceiling','problem_solution',
+                     'whole_offer','case_study','benchmark')),
+  angle_fingerprint text not null,
+  angle_family      text not null check (angle_family in ('funding','leadership','ai_move')),
+  service           text not null,
+  steps             jsonb not null default '[]'::jsonb,
+  qa_warnings       jsonb not null default '[]'::jsonb,
+  status            text not null default 'draft'
+                    check (status in ('draft','approved','rejected','exported','sent')),
+  run_id            text,
+  model             text,
+  created_at        timestamptz not null default now(),
+  unique (contact_id, angle_fingerprint)
+);
+create index if not exists messages_company_idx on messages (company_cik);
+create index if not exists messages_status_idx on messages (status);
+
 create table if not exists runs (
   id          bigint generated always as identity primary key,
   stage       text not null,
@@ -133,3 +163,4 @@ alter table scores    enable row level security;
 alter table contacts  enable row level security;
 alter table runs      enable row level security;
 alter table angles    enable row level security;
+alter table messages  enable row level security;

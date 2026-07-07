@@ -178,3 +178,52 @@ class Contact(BaseModel):
     email_source: str | None = None  # URL where the email is published
     confidence: str = "medium"
     evidence: dict = Field(default_factory=dict)
+
+
+class Archetype(str, Enum):
+    observation = "observation"
+    creative_ideas = "creative_ideas"
+    referral_ceiling = "referral_ceiling"
+    problem_solution = "problem_solution"
+    whole_offer = "whole_offer"
+    case_study = "case_study"    # off until citable proof points exist (settings messages.allowed_archetypes)
+    benchmark = "benchmark"      # off until citable proof points exist
+
+
+class CtaType(str, Enum):
+    confirm_problem = "confirm_problem"      # step 1: "seeing this too?"
+    offer_deliverable = "offer_deliverable"  # step 2: "want the gap map?"
+    micro_commitment = "micro_commitment"    # step 3: 2-min asset / single question
+    breakup_options = "breakup_options"      # step 4: numbered options
+
+
+class MessageStep(BaseModel):
+    step: int = Field(ge=1, le=4)
+    day_offset: int = Field(default=0, ge=0, description="Stamped by commit() from settings; LLM value ignored")
+    subject: str | None = Field(default=None, description="Step 1 only; steps 2-4 reply in-thread (null)")
+    body: str = Field(description="Fully rendered plain-text body — real names, no merge variables, no signature block")
+    cta_type: CtaType
+
+
+class MessageSequence(BaseModel):
+    """What the copywriter LLM must produce for one contact."""
+
+    ticker: str
+    contact_name: str = Field(description="Copy EXACTLY from the packet")
+    contact_title: str = Field(description="Copy EXACTLY from the packet")
+    archetype: Archetype
+    angle_fingerprint: str = Field(description="The step-1 angle; copy EXACTLY from the packet")
+    angle_family: AngleFamily
+    service: str = Field(description="Catalog KEY from the packet's service_fit (e.g. 'ai_consultation')")
+    steps: list[MessageStep] = Field(min_length=4, max_length=4)
+
+    @model_validator(mode="after")
+    def _validate_steps(self):
+        if [s.step for s in self.steps] != [1, 2, 3, 4]:
+            raise ValueError("steps must be numbered 1-4 in order")
+        if not (self.steps[0].subject or "").strip():
+            raise ValueError("step 1 must have a subject")
+        for s in self.steps[1:]:
+            if s.subject:
+                raise ValueError(f"step {s.step} must not have a subject (same thread)")
+        return self
