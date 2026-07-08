@@ -275,6 +275,27 @@ def test_prepare_adds_urgency_to_signals(dirs):
     assert packet["signals"][0]["urgency"] in ("hot", "warm", "cold")
 
 
+def test_derived_cohort_signal_carries_urgency_key(dirs):
+    """Packet uniformity: the synthetic E8 gets an urgency key like every
+    other signal (undated -> None, serialized as null)."""
+    q, r, a = dirs
+    peers = [{**COMPANY, "cik": i, "ticker": f"P{i}"} for i in range(2, 8)]
+    fake = scoring.db
+    fake.get_companies = lambda status=None: (
+        [dict(COMPANY)] if status == "enriched" else [dict(COMPANY), *peers]
+    )
+    # target company has no AI language (E6 only); every peer shows E1
+    fake.all_signals = lambda: {
+        1: [{**SIGNAL, "type": "E6", "observed_at": None}],
+        **{i: [dict(SIGNAL)] for i in range(2, 8)},
+    }
+    scoring.prepare()
+    packet = json.loads((q / "TST.json").read_text())
+    e8 = [s for s in packet["signals"] if s["type"] == "E8"]
+    assert e8, "derived cohort signal expected in packet"
+    assert "urgency" in e8[0] and e8[0]["urgency"] is None
+
+
 def test_commit_handles_signals_without_urgency_field(dirs):
     """Old queue packets predate the urgency field — commit must not require it."""
     q, r, a = dirs

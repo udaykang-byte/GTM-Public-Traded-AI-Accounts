@@ -182,7 +182,10 @@ def ingest(
         help="Bypass the L1 prescreen (customer/competitor exclusions, cap band, exchange/OTC, shell-name heuristics)",
     ),
 ):
-    """Add user-provided companies to the pipeline (overrides the screen)."""
+    """Add user-provided companies to the pipeline. User lists override the
+    sector screen, but the L1 prescreen still applies: hard-disqualifiers
+    (excluded tickers/SIC, cap band, exchange/OTC, shell names) write the row
+    as 'disqualified' + dq_reason — never enriched. --force bypasses it."""
     from pipeline import db, prescreen, universe
     from pipeline.config import SETTINGS
     from pipeline.models import Status
@@ -204,13 +207,19 @@ def ingest(
         table.add_column(col)
     uni = SETTINGS.get("universe", {})
     cap_min, cap_max = uni.get("market_cap_min", 0), uni.get("market_cap_max", 0)
+    # dry-run stays DB-free by design, so it can't dedupe against known rows
+    known: set[int] = set() if dry_run else db.existing_ciks()
     dq_reasons: dict[str, str] = {}
     for c in resolved:
-        reason = None if force else prescreen.check(c.model_dump(), SETTINGS)
+        already = c.cik in known
+        # nothing is written for already-known tickers, so no DQ check/note
+        reason = None if (force or already) else prescreen.check(c.model_dump(), SETTINGS)
         notes = []
+        if already:
+            notes.append("already in pipeline, untouched")
         if c.sector_bucket == "other":
             notes.append("outside target sectors")
-        elif c.market_cap and not (cap_min <= c.market_cap <= cap_max):
+        elif c.market_cap and not (cap_min <= c.market_cap <= cap_max) and reason != "outside_cap_band":
             notes.append("outside cap band")
         if reason:
             dq_reasons[c.ticker] = reason
@@ -225,14 +234,14 @@ def ingest(
         console.print(f"[yellow]Unresolved: {', '.join(unresolved)}[/yellow]")
     if dq_reasons:  # empty whenever --force is set, since reason is skipped above
         console.print(
-            f"[red]Pre-screen disqualified ({len(dq_reasons)}): "
-            + ", ".join(f"{t} ({r})" for t, r in dq_reasons.items()) + "[/red]"
+            f"[red]prescreen disqualified {len(dq_reasons)} ticker(s): "
+            + ", ".join(f"{t} ({r})" for t, r in dq_reasons.items())
+            + " — rerun with --force to ingest anyway[/red]"
         )
 
     if dry_run:
         console.print("[dim]dry run — nothing written[/dim]")
         return
-    known = db.existing_ciks()
     fresh = [c for c in resolved if c.cik not in known]
     skipped = len(resolved) - len(fresh)
     n_dq = 0

@@ -262,6 +262,9 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
             s["urgency"] = urgency_of(s["age_days"])
         derived = _derived_cohort_signal(company, slim_signals, peers, signals_by_cik)
         if derived:
+            # packet uniformity: the synthetic E8 carries the same urgency key
+            # as collected signals (undated -> None)
+            derived["urgency"] = urgency_of(_signal_age_days(derived))
             slim_signals.append(derived)
         active_angles = [
             angles_mod.slim(a)

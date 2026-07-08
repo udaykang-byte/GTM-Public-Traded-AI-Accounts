@@ -17,11 +17,11 @@ For a CSV file (must have a `ticker` column; extra columns ignored):
 uv run python -m pipeline ingest --csv "path/to/list.csv"
 ```
 
-What it does: resolves each ticker against SEC's company map (CIK, name, exchange), fetches SIC + market cap, classifies the sector bucket, and upserts as status `new`. Companies outside the configured cap band or sectors are still ingested (user lists override the screen) but tagged with their real sector/cap so scoring can weigh fit honestly.
+What it does: resolves each ticker against SEC's company map (CIK, name, exchange), fetches SIC + market cap, classifies the sector bucket, and upserts as status `new`. Companies outside the target sectors are still ingested (user lists override the sector screen) and tagged with their real sector so scoring can weigh fit honestly — but the L1 prescreen's hard-disqualifiers (excluded tickers/SIC, cap band, exchange/OTC, shell names) DO apply to ingest; failing companies are written as `disqualified` and only `--force` ingests them as active.
 
 After running:
 - Report resolved vs unresolved tickers (typos, delisted, foreign issuers).
-- Note any that fall outside the micro-cap band or target sectors — they stay in, but flag it.
+- Note any outside the target sectors — they stay in, but flag it. Cap-band/exchange failures are prescreen-disqualified (see below) unless `--force`.
 - Suggest `/enrich` as the next step.
 
 Add `--dry-run` to preview without writing to Supabase.
