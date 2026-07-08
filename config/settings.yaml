@@ -146,5 +146,38 @@ messages:
     step1_max: 120
     hard_max: 150              # any body above this fails QA outright
   you_we_ratio_min: 2.0        # prospect-focused vs self-focused language (warning)
-  banned_words_extra: []       # appended to BANNED_WORDS in messages.py
+  banned_words_extra: []       # appended to banned_words below
   framework_file: outbound_copywriter.md   # relative to config/; embedded in _shared.json
+  # Canonical banned-word list (v3): messages.py's _DEFAULT_BANNED_WORDS is a
+  # fallback for packs without this key — the two must read the same either
+  # way. ALSO see config/outbound_copywriter.md's "Voice" section (human-facing
+  # copy of the same list) — change all three together.
+  banned_words:
+    - leverage
+    - utilize
+    - streamline
+    - comprehensive
+    - robust
+    - innovative
+    - cutting-edge
+    - game-changing
+    - revolutionary
+    - disruptive
+    - synergy
+    - best-in-class
+    - world-class
+    - next-generation
+    - solution
+    - excited to
+    - passionate about
+    - thrilled
+    - reimagine
+    - transform
+    - empower
+    - elevate
+    - optimize
+    - drive results
+    - thought leader
+  # v3: minimum step-1 personalization score (0-5, see messages._personalization_score)
+  # before qa_check appends a "personalization N/5" warning. Never a hard fail.
+  personalization_min: 3

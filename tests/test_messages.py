@@ -405,3 +405,138 @@ def test_commit_warnings_ride_on_row(dirs):
     warns = messages.db.upserted[0]["qa_warnings"]
     assert any("unverified number" in w for w in warns)
     assert "TST__anne-smith" in summary["warnings"]
+
+
+# ---------- v3: personas ----------
+
+def test_prepare_attaches_persona_block_for_cmo(dirs):
+    q, r, a = dirs
+    messages.prepare()
+    persona = anne_packet(q)["persona"]
+    assert persona is not None
+    assert persona["committee_role"] == "budget owner"
+    assert persona["seniority"] == "c-suite"
+    assert len(persona["pains"]) == 3
+    assert set(persona["language"]) == {"their_words", "avoid"}
+
+
+CONTACT_UNRECOGNIZED = {"id": 21, "name": "Jamie Doe", "title": "Regional Facilities Manager",
+                        "role_bucket": "", "linkedin_url": None, "email": None}
+
+
+def test_prepare_persona_block_none_when_role_bucket_and_title_unrecognized(dirs):
+    q, r, a = dirs
+    messages.db.contacts_rows = [dict(CONTACT_UNRECOGNIZED)]
+    messages.prepare()
+    packet = json.loads((q / "TST__jamie-doe.json").read_text())
+    assert packet["persona"] is None
+
+
+def test_recommended_service_consults_personas_before_legacy_roles_by_service(monkeypatch):
+    # sabotage roles_by_service so a fallback-to-legacy read would answer
+    # wrong -- proves personas are consulted FIRST, not merely available
+    monkeypatch.setitem(messages.SETTINGS["people"], "roles_by_service", {})
+    fits = [{"service": "ai_outreach", "priority": 1}, {"service": "ai_consultation", "priority": 2}]
+    assert messages._recommended_service(fits, "CMO") == "ai_outreach"
+
+
+def test_recommended_service_falls_back_to_legacy_when_personas_empty(monkeypatch):
+    monkeypatch.setattr(messages, "PERSONAS", {})
+    fits = [{"service": "ai_outreach", "priority": 1}, {"service": "ai_consultation", "priority": 2}]
+    assert messages._recommended_service(fits, "CMO") == "ai_outreach"
+    assert messages._recommended_service(fits, "CEO") == "ai_consultation"
+    assert messages._recommended_service(fits, "") == "ai_outreach"  # lead service
+
+
+def test_shared_json_instructs_persona_pains_as_raw_material_only(dirs):
+    q, r, a = dirs
+    messages.prepare()
+    shared = json.loads((q / "_shared.json").read_text())
+    assert any("persona" in rule.lower() and "do not invent" in rule.lower()
+               for rule in shared["hard_rules"])
+
+
+def test_commit_handles_packet_without_persona_key(dirs):
+    """Old packets (written before this phase) never had a "persona" key —
+    commit must not KeyError on them."""
+    q, r, a = dirs
+    messages.prepare(limit=1)
+    packet_path = q / "TST__anne-smith.json"
+    packet = json.loads(packet_path.read_text())
+    del packet["persona"]
+    packet_path.write_text(json.dumps(packet))
+    _write_result(r, "TST__anne-smith.json", make_seq())
+
+    summary = messages.commit(run_id="nopersona")
+
+    assert summary["invalid"] == []
+    assert len(summary["written"]) == 1
+
+
+# ---------- v3: personalization heuristic (qa_check, warning only) ----------
+
+def test_personalization_score_high_for_tailored_body(packet):
+    assert messages._personalization_score(BODY1, packet) >= 3
+
+
+def test_personalization_score_zero_for_generic_body(packet):
+    generic = ("Hope you are doing well. Are you interested in learning more "
+               "about our approach? " + " ".join(["word"] * 50))
+    assert messages._personalization_score(generic, packet) == 0
+
+
+def test_personalization_score_missing_persona_falls_back_to_angle_headline(packet):
+    """No persona matched (packet["persona"] is None) -> the pain-led-opener
+    check falls back to the primary angle's headline words instead of
+    crashing or silently losing that point."""
+    packet_no_persona = {**packet, "persona": None}
+    headline = packet["angles"][0]["headline"]
+    opener = f"{headline}. " + " ".join(["word"] * 40) + "?"
+    assert messages._personalization_score(opener, packet_no_persona) >= 1
+
+
+def test_qa_check_warns_below_personalization_min(packet):
+    generic_seq = seq_with_step(1, body=(
+        "Hope you are doing well. Are you interested in learning more about "
+        "our approach? " + " ".join(["word"] * 50)))
+    _, warn = _qa(generic_seq, packet)
+    assert any(w.startswith("personalization ") for w in warn)
+
+
+def test_qa_check_personalization_warning_never_a_hard_failure(packet):
+    generic_seq = seq_with_step(1, body=(
+        "Hope you are doing well. Are you interested in learning more about "
+        "our approach? " + " ".join(["word"] * 50)))
+    hard, _ = _qa(generic_seq, packet)
+    assert hard == []
+
+
+def test_qa_check_respects_personalization_min_setting(monkeypatch, packet):
+    monkeypatch.setitem(messages.SETTINGS["messages"], "personalization_min", 0)
+    generic_seq = seq_with_step(1, body=(
+        "Hope you are doing well. Are you interested in learning more about "
+        "our approach? " + " ".join(["word"] * 50)))
+    _, warn = _qa(generic_seq, packet)
+    assert not any(w.startswith("personalization ") for w in warn)
+
+
+# ---------- v3: banned words single-sourced to settings.yaml ----------
+
+def test_banned_words_reads_from_settings():
+    assert messages._banned_words() == messages.SETTINGS["messages"]["banned_words"]
+
+
+def test_banned_words_falls_back_to_default_when_settings_key_absent(monkeypatch, packet):
+    monkeypatch.delitem(messages.SETTINGS["messages"], "banned_words")
+    assert messages._banned_words() == messages._DEFAULT_BANNED_WORDS
+    hard, _ = _qa(seq_with_step(3, body=BODY3.replace("staffed", "streamlined")), packet)
+    assert any("banned word 'streamline'" in h for h in hard)
+
+
+def test_banned_words_honors_settings_override(monkeypatch, packet):
+    monkeypatch.setitem(messages.SETTINGS["messages"], "banned_words", ["bespoke"])
+    hard, _ = _qa(seq_with_step(3, body=BODY3 + " We offer a bespoke approach."), packet)
+    assert any("banned word 'bespoke'" in h for h in hard)
+    # a word from the ORIGINAL default list is no longer banned once overridden
+    hard2, _ = _qa(seq_with_step(3, body=BODY3.replace("staffed", "streamlined")), packet)
+    assert not any("banned word 'streamline'" in h for h in hard2)

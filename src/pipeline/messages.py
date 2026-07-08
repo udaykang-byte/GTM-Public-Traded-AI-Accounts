@@ -8,7 +8,11 @@ v2 sub-project 2 flow (no LLM API cost):
 One packet per CONTACT (role-aware copy). The copywriter framework
 (config/outbound_copywriter.md), services catalog, and output schema live in
 data/message_queue/_shared.json; a copywriter needs the packet plus that file.
-Generation only — no sending, no CRM push (sub-project 3).
+Each packet also carries a `persona` block (pains/language/committee_role/
+seniority) from config/personas.yaml when the contact's role_bucket or title
+resolves to one (see pipeline.people.match_persona) — null otherwise; older
+packets without the key still commit fine. Generation only — no sending, no
+CRM push (sub-project 3).
 """
 from __future__ import annotations
 
@@ -22,10 +26,12 @@ from pydantic import ValidationError
 
 from pipeline import angles as angles_mod
 from pipeline import db
+from pipeline import people as people_mod
 from pipeline.config import (
     MSG_ARCHIVE_DIR,
     MSG_QUEUE_DIR,
     MSG_RESULTS_DIR,
+    PERSONAS,
     SERVICES,
     SETTINGS,
     profile_file,
@@ -33,10 +39,13 @@ from pipeline.config import (
 from pipeline.db import order_by_tier_priority
 from pipeline.models import MessageSequence
 
-# Deterministic QA copy of the banned list in config/outbound_copywriter.md
-# ("Voice" section) — change both together. Single words match inflections
+# Fallback banned list, used only when the active pack's settings.yaml has no
+# messages.banned_words key. The canonical, editable list now lives in
+# config/settings.yaml (messages.banned_words) — SEE ALSO
+# config/outbound_copywriter.md's "Voice" section, which documents the same
+# words for humans; change all three together. Single words match inflections
 # (leverage -> leveraging); phrases match with flexible whitespace/hyphens.
-BANNED_WORDS = [
+_DEFAULT_BANNED_WORDS = [
     "leverage", "utilize", "streamline", "comprehensive", "robust", "innovative",
     "cutting-edge", "game-changing", "revolutionary", "disruptive", "synergy",
     "best-in-class", "world-class", "next-generation", "solution", "excited to",
@@ -85,6 +94,11 @@ HARD_RULES = [
     "packet's primary_angle_fingerprint angle; steps 2 and 3 must each bring "
     "something NEW (a different angle's pain or the service pitch) — never "
     "'just bumping'.",
+    "PERSONA: when the packet has a persona block, use its pains and "
+    "language.their_words as raw material for how this contact would "
+    "describe their own situation — do not invent pains beyond what the "
+    "packet (angles, verdict) and persona together support. If persona is "
+    "null, write from the packet's angles and verdict alone.",
     "Fully rendered plain text: real first name, real company name; no "
     "{{merge_variables}}, no [bracketed placeholders], no signature block — "
     "sign off with just 'Uday'.",
@@ -130,13 +144,29 @@ def _pick_angle(score: dict, fresh: list[dict]) -> dict | None:
 
 def _recommended_service(fits: list[dict], role_bucket: str) -> str:
     """First service (priority order) whose target roles include this contact's
-    role — the role-aware part of per-contact packets. Falls back to the lead."""
-    roles_by_service = SETTINGS.get("people", {}).get("roles_by_service", {})
+    role — the role-aware part of per-contact packets. Consults config/
+    personas.yaml's services mapping first (when the active pack has one),
+    else the legacy flat people.roles_by_service lookup. Falls back to the
+    lead service either way when role_bucket doesn't match anything."""
     ordered = sorted(fits, key=lambda f: f.get("priority", 9))
-    for f in ordered:
-        roles = [r.lower() for r in roles_by_service.get(f.get("service", ""), [])]
-        if role_bucket and role_bucket.lower() in roles:
-            return f["service"]
+    rb = (role_bucket or "").strip().lower()
+    if rb:
+        if PERSONAS:
+            defs = people_mod.persona_defs(PERSONAS)
+            services_map: dict = PERSONAS.get("services", {})
+            persona_keys = {
+                k for k, v in defs.items()
+                if str(v.get("role_bucket", "")).strip().lower() == rb
+            }
+            for f in ordered:
+                if persona_keys & set(services_map.get(f.get("service", ""), [])):
+                    return f["service"]
+        else:
+            roles_by_service = SETTINGS.get("people", {}).get("roles_by_service", {})
+            for f in ordered:
+                roles = [r.lower() for r in roles_by_service.get(f.get("service", ""), [])]
+                if rb in roles:
+                    return f["service"]
     return ordered[0]["service"] if ordered else ""
 
 
@@ -235,6 +265,8 @@ def prepare(
                 for c in contacts if c.get("id") != contact.get("id")
             ]
             output_path = (MSG_RESULTS_DIR / f"{name}.json").as_posix()
+            persona = people_mod.match_persona(
+                contact.get("role_bucket") or "", contact.get("title") or "")
             packet = {
                 "ticker": company["ticker"],
                 "company": {
@@ -260,6 +292,12 @@ def prepare(
                     "angle_ranking": score.get("angle_ranking") or [],
                 },
                 "recommended_service": _recommended_service(fits, contact.get("role_bucket") or ""),
+                "persona": ({
+                    "committee_role": persona.get("committee_role"),
+                    "seniority": persona.get("seniority"),
+                    "pains": persona.get("pains", []),
+                    "language": persona.get("language", {}),
+                } if persona else None),
                 "primary_angle_fingerprint": angle["fingerprint"],
                 "angles": [angles_mod.slim(a) for a in fresh],
                 "shared_file": shared_path.as_posix(),
@@ -291,11 +329,75 @@ def _banned_pattern(entry: str) -> re.Pattern:
     return re.compile(r"\b" + r"[-\s]+".join(parts) + r"\b", re.IGNORECASE)
 
 
-_BANNED_PATTERNS = [(w, _banned_pattern(w)) for w in BANNED_WORDS]
+def _banned_words() -> list[str]:
+    """Canonical source: config/settings.yaml messages.banned_words. Falls
+    back to _DEFAULT_BANNED_WORDS (identical content) when the active pack's
+    settings.yaml has no such key — behavior is the same either way."""
+    words = _cfg().get("banned_words")
+    return list(words) if words else list(_DEFAULT_BANNED_WORDS)
+
+
+def _banned_patterns() -> list[tuple[str, re.Pattern]]:
+    return [(w, _banned_pattern(w)) for w in _banned_words()]
 
 
 def _word_count(text: str) -> int:
     return len(text.split())
+
+
+# crude "nouns" for the personalization heuristic below — alpha tokens of
+# length >=4, minus filler words and common corporate-name suffixes
+_STOPWORDS = {
+    "the", "and", "for", "with", "this", "that", "from", "into", "over",
+    "than", "then", "will", "would", "could", "about", "have", "has", "had",
+    "not", "your", "their", "our", "inc", "corp", "corporation", "company",
+    "holdings", "group", "ltd", "llc",
+}
+
+
+def _significant_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", (text or "").lower())
+            if len(w) >= 4 and w not in _STOPWORDS}
+
+
+def _personalization_score(step1_body: str, packet: dict) -> int:
+    """0-5 deterministic heuristic on step 1's body only — warning-tier
+    signal, never a hard gate (see qa_check). +1 each for: references the
+    primary angle's headline words, echoes why_now content, uses a persona
+    their_words phrase, names a company-specific fact beyond the ticker,
+    opens (first sentence) with a persona/angle pain word."""
+    body_lower = (step1_body or "").lower()
+    score = 0
+
+    angle_fp = packet.get("primary_angle_fingerprint")
+    angle = next((a for a in packet.get("angles", []) if a.get("fingerprint") == angle_fp), None)
+    headline_words = _significant_words(angle.get("headline", "")) if angle else set()
+    if headline_words and any(w in body_lower for w in headline_words):
+        score += 1
+
+    why_now_words = _significant_words((packet.get("verdict") or {}).get("why_now", ""))
+    if why_now_words and any(w in body_lower for w in why_now_words):
+        score += 1
+
+    persona = packet.get("persona") or {}
+    their_words = (persona.get("language") or {}).get("their_words") or []
+    if any(str(phrase).strip().lower() in body_lower for phrase in their_words if phrase):
+        score += 1
+
+    company_words = _significant_words((packet.get("company") or {}).get("name", ""))
+    if company_words and any(w in body_lower for w in company_words):
+        score += 1
+
+    pain_words: set[str] = set()
+    for p in persona.get("pains") or []:
+        pain_words |= _significant_words(p)
+    if not pain_words:
+        pain_words = headline_words  # no persona matched -> fall back to the angle
+    first_sentence = re.split(r"(?<=[.!?])\s+", (step1_body or "").strip())[0].lower() if step1_body else ""
+    if pain_words and any(w in first_sentence for w in pain_words):
+        score += 1
+
+    return score
 
 
 def qa_check(seq: MessageSequence, packet: dict) -> tuple[list[str], list[str]]:
@@ -362,7 +464,7 @@ def qa_check(seq: MessageSequence, packet: dict) -> tuple[list[str], list[str]]:
         m = DATE_CITE_RE.search(text)
         if m:
             hard.append(f"step {s.step} cites a calendar date ('{m.group(0)}') — reads as filing surveillance")
-        for word, pat in _BANNED_PATTERNS:
+        for word, pat in _banned_patterns():
             if pat.search(text):
                 hard.append(f"banned word '{word}' in step {s.step}")
         if s.step <= 3 and MEETING_ASK_RE.search(s.body):
@@ -402,6 +504,13 @@ def qa_check(seq: MessageSequence, packet: dict) -> tuple[list[str], list[str]]:
     ratio_min = float(cfg.get("you_we_ratio_min", 2.0))
     if me and you / me < ratio_min:
         warn.append(f"you:we ratio {you}:{me} below {ratio_min} — too self-focused")
+
+    # personalization heuristic (v3): warning-tier only, never a hard fail —
+    # the QA gate stays a floor on copy MECHANICS, not a judge of prose quality
+    p_score = _personalization_score(seq.steps[0].body, packet)
+    p_min = int(cfg.get("personalization_min", 3))
+    if p_score < p_min:
+        warn.append(f"personalization {p_score}/5")
 
     return hard, warn
 
