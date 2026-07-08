@@ -4,7 +4,7 @@ Activation must mutate SETTINGS/SERVICES in place — other modules alias the
 same dict objects via `from pipeline.config import SETTINGS`."""
 import pytest
 
-from pipeline import config, scoring
+from pipeline import config, people, scoring
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +29,65 @@ def test_activate_profile_mutates_in_place_not_rebinds():
 def test_scoring_settings_is_config_settings_after_activation():
     config.activate_profile(None)
     assert scoring.SETTINGS is config.SETTINGS
+
+
+# ---------- v3: PERSONAS — same in-place-mutation contract as SETTINGS/SERVICES ----------
+
+def test_activate_profile_mutates_personas_in_place_not_rebinds():
+    personas_obj_id = id(config.PERSONAS)
+    config.activate_profile(None)  # no-op reload of the default pack
+    assert id(config.PERSONAS) == personas_obj_id
+
+
+def test_people_personas_is_config_personas_after_activation():
+    config.activate_profile(None)
+    assert people.PERSONAS is config.PERSONAS
+
+
+def test_personas_overlay_falls_back_to_default(tmp_path, monkeypatch):
+    # pack with only settings.yaml -> personas.yaml falls back to config/
+    pack = tmp_path / "profiles" / "partial"
+    pack.mkdir(parents=True)
+    (pack / "settings.yaml").write_text("universe:\n  sectors: {}\n")
+    monkeypatch.setattr(config, "PROFILES_ROOT", tmp_path / "profiles")
+    config.activate_profile("partial")
+    assert config.profile_file("personas.yaml") == config.DEFAULT_PROFILE_DIR / "personas.yaml"
+    assert "ceo" in config.PERSONAS  # fell back to the default pack's personas
+
+
+def test_activate_profile_overrides_personas_content(tmp_path, monkeypatch):
+    pack = tmp_path / "profiles" / "acme"
+    pack.mkdir(parents=True)
+    (pack / "personas.yaml").write_text(
+        "widget_lead:\n"
+        "  role_bucket: Widget Lead\n"
+        "  titles: [Widget Lead]\n"
+        "  seniority: head\n"
+        "  committee_role: champion\n"
+        "  pains: [p1, p2, p3]\n"
+        "  language: {their_words: [], avoid: []}\n"
+        "services:\n"
+        "  widgets: [widget_lead]\n"
+    )
+    monkeypatch.setattr(config, "PROFILES_ROOT", tmp_path / "profiles")
+    config.activate_profile("acme")
+    assert "widget_lead" in config.PERSONAS
+    # per-file replace, never per-key merge
+    assert "ceo" not in config.PERSONAS
+
+
+def test_activate_default_restores_builtin_personas(tmp_path, monkeypatch):
+    pack = tmp_path / "profiles" / "acme"
+    pack.mkdir(parents=True)
+    (pack / "personas.yaml").write_text(
+        "widget_lead: {role_bucket: Widget Lead, titles: [], seniority: head, "
+        "committee_role: champion, pains: [], language: {their_words: [], avoid: []}}\n"
+    )
+    monkeypatch.setattr(config, "PROFILES_ROOT", tmp_path / "profiles")
+    config.activate_profile("acme")
+    config.activate_profile(None)
+    assert config.PROFILE_DIR == config.DEFAULT_PROFILE_DIR
+    assert "ceo" in config.PERSONAS
 
 
 def test_activate_unknown_profile_raises():

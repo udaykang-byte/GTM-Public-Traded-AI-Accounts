@@ -50,12 +50,18 @@ def _load_yaml_from(path: Path) -> dict:
 
 SETTINGS: dict = _load_yaml_from(profile_file("settings.yaml"))
 SERVICES: dict = _load_yaml_from(profile_file("services.yaml")).get("services", {})
+# Persona catalog (people-targeting + cold-email personalization): persona
+# key -> {role_bucket, titles, seniority, committee_role, pains, language}
+# plus a "services" key mapping service_key -> [persona keys]. {} when the
+# active pack has no personas.yaml (people/messages fall back to the legacy
+# roles_by_service-only behavior in that case).
+PERSONAS: dict = _load_yaml_from(profile_file("personas.yaml"))
 
 
 def activate_profile(name: str | None) -> None:
     """Point PROFILE_DIR at profiles/<name> (or back at the default config/
-    pack for None/"default") and reload SETTINGS/SERVICES IN PLACE — other
-    modules hold a reference to the same dict objects via
+    pack for None/"default") and reload SETTINGS/SERVICES/PERSONAS IN PLACE —
+    other modules hold a reference to the same dict objects via
     `from pipeline.config import SETTINGS`, so mutate, never rebind."""
     global PROFILE_DIR
     if not name or name == "default":
@@ -68,10 +74,13 @@ def activate_profile(name: str | None) -> None:
 
     new_settings = _load_yaml_from(profile_file("settings.yaml"))
     new_services = _load_yaml_from(profile_file("services.yaml")).get("services", {})
+    new_personas = _load_yaml_from(profile_file("personas.yaml"))
     SETTINGS.clear()
     SETTINGS.update(new_settings)
     SERVICES.clear()
     SERVICES.update(new_services)
+    PERSONAS.clear()
+    PERSONAS.update(new_personas)
 
 
 def list_profiles() -> list[str]:

@@ -1,0 +1,197 @@
+# Persona catalog — who we're writing to, in their own words.
+#
+# Drives two things:
+#   1. /people role targeting (services.<service_key> lists persona keys in
+#      the SAME priority order as the legacy people.roles_by_service lists —
+#      this file must stay behavior-identical to that list; see
+#      tests/test_personas.py::test_target_roles_identical_to_legacy_path).
+#   2. /outreach personalization — each persona's pains/language is attached
+#      to a contact's message packet (see messages.py::prepare) so the
+#      copywriter subagent has role-specific raw material, not just a title.
+#
+# Pains/language below are lifted from config/outbound_copywriter.md's
+# Signal -> Pain -> Fix table and Business Context section (2026-07-07) —
+# reused, not invented. Keep both files in sync if the framework's pain
+# language changes.
+#
+# committee_role is informational context for the copywriter (economic buyer
+# vs champion vs technical evaluator) — never changes scoring or QA.
+
+ceo:
+  role_bucket: CEO
+  titles: [CEO, Chief Executive Officer, President & CEO, President and CEO, Founder & CEO, Founder and CEO]
+  seniority: c-suite
+  committee_role: economic buyer
+  pains:
+    - Investors ask about AI on every call and nobody inside owns the answer.
+    - The board expects the raise to turn into growth, and hiring reps the old way eats it as ramp time and payroll before pipeline moves.
+    - The AI promise is public but execution is unstaffed, and the gap between the announcement and the product widens every quarter.
+  language:
+    their_words: [board, investors, the raise, headcount, runway, own it]
+    avoid: [AI-powered platform, game-changing, thought leader, synergy]
+
+cfo:
+  role_bucket: CFO
+  titles: [CFO, Chief Financial Officer, VP Finance, VP of Finance]
+  seniority: c-suite
+  committee_role: budget gatekeeper
+  pains:
+    - The board expects the raise to turn into growth, and hiring reps the old way eats it as ramp time and payroll before pipeline moves.
+    - More budget keeps going into the same manual motion and it isn't bending the growth curve.
+    - GTM still runs manually — no internal AI owner to turn ambition into execution.
+  language:
+    their_words: [payroll, headcount, burn, runway, cost per meeting, budget]
+    avoid: [AI-powered platform, game-changing, revolutionary, best-in-class]
+
+coo:
+  role_bucket: COO
+  titles: [COO, Chief Operating Officer]
+  seniority: c-suite
+  committee_role: operational buyer
+  pains:
+    - Inherited manual operations plus pressure for early wins, with no time to build a team before delivering one.
+    - GTM still runs manually — no internal AI owner to turn ambition into execution.
+    - More budget keeps going into the same manual motion and it isn't bending the growth curve.
+  language:
+    their_words: [headcount, ramp time, manual process, ownership, execution]
+    avoid: [streamline, optimize, synergy, cutting-edge]
+
+cmo:
+  role_bucket: CMO
+  titles: [CMO, Chief Marketing Officer, Chief Marketing & Growth Officer]
+  seniority: c-suite
+  committee_role: budget owner
+  pains:
+    - The board expects the raise to turn into growth, and hiring reps the old way eats it as ramp time and payroll before pipeline moves.
+    - More budget keeps going into the same manual motion and it isn't bending the growth curve.
+    - Every SDR/BDR or marketing hire is months of ramp and fixed cost, and cost per meeting keeps climbing.
+  language:
+    their_words: [pipeline, headcount, ramp, cost per meeting, budget, quarter]
+    avoid: [AI-powered platform, innovative, revolutionary, best-in-class]
+
+vp_marketing:
+  role_bucket: VP Marketing
+  titles: [VP Marketing, VP of Marketing, Vice President of Marketing, "Vice President, Marketing", Head of Marketing]
+  seniority: vp
+  committee_role: champion
+  pains:
+    - More budget keeps going into the same manual motion and it isn't bending the growth curve.
+    - Every SDR/BDR or marketing hire is months of ramp and fixed cost, and cost per meeting keeps climbing.
+    - GTM still runs manually — no internal AI owner to turn ambition into execution.
+  language:
+    their_words: [content velocity, campaign, pipeline, thin team, martech stack]
+    avoid: [game-changing, cutting-edge, world-class, disruptive]
+
+cro:
+  role_bucket: CRO
+  titles: [CRO, Chief Revenue Officer]
+  seniority: c-suite
+  committee_role: budget owner
+  pains:
+    - Every SDR/BDR or marketing hire is months of ramp and fixed cost, and cost per meeting keeps climbing.
+    - More budget keeps going into the same manual motion and it isn't bending the growth curve.
+    - The board expects the raise to turn into growth, and hiring reps the old way eats it as ramp time and payroll before pipeline moves.
+  language:
+    their_words: [quota, pipeline, ramp, headcount, cost per meeting]
+    avoid: [best-in-class, revolutionary, synergy, thought leader]
+
+vp_sales:
+  role_bucket: VP Sales
+  titles: [VP Sales, VP of Sales, Vice President of Sales, "Vice President, Sales"]
+  seniority: vp
+  committee_role: champion
+  pains:
+    - Every SDR/BDR or marketing hire is months of ramp and fixed cost, and cost per meeting keeps climbing.
+    - More budget keeps going into the same manual motion and it isn't bending the growth curve.
+    - Inherited manual operations plus pressure for early wins, with no time to build a team before delivering one.
+  language:
+    their_words: [quota, pipeline, ramp, reps, cost per meeting]
+    avoid: [game-changing, cutting-edge, leverage, streamline]
+
+head_of_growth:
+  role_bucket: Head of Growth
+  titles: [Head of Growth, VP Growth, Director of Growth]
+  seniority: head
+  committee_role: champion
+  pains:
+    - More budget keeps going into the same manual motion and it isn't bending the growth curve.
+    - Every SDR/BDR or marketing hire is months of ramp and fixed cost, and cost per meeting keeps climbing.
+    - The board expects the raise to turn into growth, and hiring reps the old way eats it as ramp time and payroll before pipeline moves.
+  language:
+    their_words: [pipeline, funnel, cost per meeting, headcount, experiment]
+    avoid: [innovative, revolutionary, synergy, world-class]
+
+head_of_sales_development:
+  role_bucket: Head of Sales Development
+  titles: [Head of Sales Development, Director of Sales Development, VP Sales Development, Head of SDR]
+  seniority: head
+  committee_role: champion
+  pains:
+    - Every SDR/BDR or marketing hire is months of ramp and fixed cost, and cost per meeting keeps climbing.
+    - Inherited manual operations plus pressure for early wins, with no time to build a team before delivering one.
+    - More budget keeps going into the same manual motion and it isn't bending the growth curve.
+  language:
+    their_words: [ramp, quota, cost per meeting, headcount, outbound]
+    avoid: [game-changing, cutting-edge, leverage, streamline]
+
+head_of_digital:
+  role_bucket: Head of Digital
+  titles: [Head of Digital, Head of Digital Marketing, Director of Digital Marketing]
+  seniority: head
+  committee_role: champion
+  pains:
+    - More budget keeps going into the same manual motion and it isn't bending the growth curve.
+    - GTM still runs manually — no internal AI owner to turn ambition into execution.
+    - Every SDR/BDR or marketing hire is months of ramp and fixed cost, and cost per meeting keeps climbing.
+  language:
+    their_words: [content velocity, campaign, martech stack, thin team]
+    avoid: [innovative, disruptive, best-in-class, world-class]
+
+cto:
+  role_bucket: CTO
+  titles: [CTO, Chief Technology Officer]
+  seniority: c-suite
+  committee_role: technical evaluator
+  pains:
+    - The AI promise is public but execution is unstaffed, and the gap between the announcement and the product widens every quarter.
+    - GTM still runs manually — no internal AI owner to turn ambition into execution.
+    - Inherited manual operations plus pressure for early wins, with no time to build a team before delivering one.
+  language:
+    their_words: [roadmap, shipped, capability, tech debt, in-house]
+    avoid: [cutting-edge, revolutionary, game-changing, synergy]
+
+cio:
+  role_bucket: CIO
+  titles: [CIO, Chief Information Officer]
+  seniority: c-suite
+  committee_role: technical evaluator
+  pains:
+    - The AI promise is public but execution is unstaffed, and the gap between the announcement and the product widens every quarter.
+    - GTM still runs manually — no internal AI owner to turn ambition into execution.
+    - Investors ask about AI on every call and nobody inside owns the answer.
+  language:
+    their_words: [roadmap, vendor, in-house, capability, assessment]
+    avoid: [cutting-edge, revolutionary, best-in-class, disruptive]
+
+vp_engineering:
+  role_bucket: VP Engineering
+  titles: [VP Engineering, VP of Engineering, Vice President of Engineering, Head of Engineering]
+  seniority: vp
+  committee_role: technical evaluator
+  pains:
+    - The AI promise is public but execution is unstaffed, and the gap between the announcement and the product widens every quarter.
+    - GTM still runs manually — no internal AI owner to turn ambition into execution.
+    - Inherited manual operations plus pressure for early wins, with no time to build a team before delivering one.
+  language:
+    their_words: [roadmap, shipped, in-house, backlog, capability]
+    avoid: [cutting-edge, revolutionary, game-changing, synergy]
+
+# service_key -> [persona keys], priority order preserved from
+# config/settings.yaml people.roles_by_service (this mapping must stay
+# behavior-identical to that list — see test_target_roles_identical_to_legacy_path).
+services:
+  ai_lead_generation: [cmo, vp_marketing, cro, vp_sales, head_of_growth]
+  ai_outreach: [cro, vp_sales, head_of_sales_development, cmo]
+  ai_marketing: [cmo, vp_marketing, head_of_digital]
+  custom_ai_agents: [cto, cio, coo, vp_engineering]
+  ai_consultation: [ceo, cfo, coo]

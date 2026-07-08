@@ -1,12 +1,14 @@
 """People search: decision-makers for qualified accounts via Parallel research.
 
-Role targeting comes from the company's service_fit (config people.roles_by_service)
-plus always-include roles (CEO — micro-caps buy top-down). Emails are recorded
-ONLY when publicly published somewhere citable; no guessing or pattern inference.
+Role targeting comes from the company's service_fit — via config/personas.yaml
+services mapping when the active pack has one (PERSONAS non-empty), else the
+legacy flat config people.roles_by_service lookup — plus always-include roles
+(CEO — micro-caps buy top-down). Emails are recorded ONLY when publicly
+published somewhere citable; no guessing or pattern inference.
 """
 from __future__ import annotations
 
-from pipeline.config import SETTINGS
+from pipeline.config import PERSONAS, SETTINGS
 from pipeline.db import order_by_tier_priority
 from pipeline.models import Contact
 from pipeline.parallel_client import run_task, run_tasks_batch
@@ -54,16 +56,73 @@ def _service_key(value: str) -> str:
     return raw
 
 
+def persona_defs(personas: dict | None = None) -> dict:
+    """personas (default: this module's PERSONAS) minus the reserved
+    "services" key — persona key -> persona dict. Takes an explicit dict so
+    callers with their own PERSONAS reference (messages.py — tests monkeypatch
+    it independently of this module's) get a consistent view."""
+    source = PERSONAS if personas is None else personas
+    return {k: v for k, v in source.items() if k != "services"}
+
+
 def target_roles(service_fit: list[dict]) -> list[str]:
+    """Personas path (config/personas.yaml services mapping) when the active
+    pack has personas, else the legacy flat roles_by_service lookup. The
+    default pack's personas.yaml encodes the exact same role lists in the
+    exact same order, so output is identical either way — see
+    tests/test_personas.py::test_target_roles_identical_to_legacy_path."""
     cfg = SETTINGS.get("people", {})
     roles: list[str] = list(cfg.get("always_include_roles", ["CEO"]))
-    by_service: dict = cfg.get("roles_by_service", {})
     ranked = sorted(service_fit or [], key=lambda s: s.get("priority", 9))
-    for fit in ranked[:2]:  # top two services drive targeting
-        for role in by_service.get(_service_key(fit.get("service", "")), []):
-            if role not in roles:
-                roles.append(role)
+    if PERSONAS:
+        defs = persona_defs()
+        services_map: dict = PERSONAS.get("services", {})
+        for fit in ranked[:2]:  # top two services drive targeting
+            for key in services_map.get(_service_key(fit.get("service", "")), []):
+                persona = defs.get(key) or {}
+                role = persona.get("role_bucket")
+                if role and role not in roles:
+                    roles.append(role)
+    else:
+        by_service: dict = cfg.get("roles_by_service", {})
+        for fit in ranked[:2]:  # top two services drive targeting
+            for role in by_service.get(_service_key(fit.get("service", "")), []):
+                if role not in roles:
+                    roles.append(role)
     return roles[:6]
+
+
+def match_persona(role_bucket: str, title: str = "") -> dict | None:
+    """Resolve a persona for a contact — used to attach pains/language to a
+    message packet (messages.py). Tries the contact's stored role_bucket
+    first (case-insensitive exact match against persona.role_bucket — this
+    accepts LEGACY bucket values already in the DB, e.g. "CEO", captured by
+    the keyword match in _contacts_from_result before personas existed).
+    Falls back to matching the contact's title against each persona's title
+    variants — needed because that legacy match is a plain substring test of
+    the abbreviated role_bucket token in the title (e.g. "cmo" is not a
+    substring of "chief marketing officer"), so many real contacts land with
+    role_bucket == "" despite having a clearly identifiable title. Returns
+    None if PERSONAS is empty (no persona pack active) or nothing matches."""
+    if not PERSONAS:
+        return None
+    defs = persona_defs()
+
+    rb = (role_bucket or "").strip().lower()
+    if rb:
+        for persona in defs.values():
+            if str(persona.get("role_bucket", "")).strip().lower() == rb:
+                return persona
+
+    t = (title or "").strip().lower()
+    if t:
+        for persona in defs.values():
+            for variant in persona.get("titles", []) or []:
+                v = str(variant).strip().lower()
+                if v and (v in t or t in v):
+                    return persona
+
+    return None
 
 
 def _people_input_text(company: dict, roles: list[str]) -> str:
