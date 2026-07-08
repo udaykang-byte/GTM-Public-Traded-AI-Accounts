@@ -26,9 +26,9 @@ from pipeline.config import (
     MSG_ARCHIVE_DIR,
     MSG_QUEUE_DIR,
     MSG_RESULTS_DIR,
-    PROJECT_ROOT,
     SERVICES,
     SETTINGS,
+    profile_file,
 )
 from pipeline.models import MessageSequence
 
@@ -110,7 +110,7 @@ def _cfg() -> dict:
 
 
 def _framework_text() -> str:
-    path = PROJECT_ROOT / "config" / _cfg().get("framework_file", "outbound_copywriter.md")
+    path = profile_file(_cfg().get("framework_file", "outbound_copywriter.md"))
     return path.read_text()
 
 
