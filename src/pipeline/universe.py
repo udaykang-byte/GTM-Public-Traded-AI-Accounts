@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 import httpx
 
 from pipeline.config import CACHE_DIR, SETTINGS, edgar_identity, env
-from pipeline.models import Company, Sector
+from pipeline.models import Company
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
@@ -202,7 +202,9 @@ def get_market_cap(ticker: str, max_age_days: int = 7, exchange: str | None = No
 
 # ---------- sector classification ----------
 
-def classify_sector(sic: str, name: str, sic_description: str = "") -> Sector:
+def classify_sector(sic: str, name: str, sic_description: str = "") -> str:
+    """Returns the matching SETTINGS sector key (free vocabulary — profile
+    packs bring their own sector sets), or "other"."""
     uni = SETTINGS.get("universe", {})
     sectors: dict = uni.get("sectors", {})
     generic = {str(s) for s in uni.get("generic_tech_sic", [])}
@@ -211,23 +213,27 @@ def classify_sector(sic: str, name: str, sic_description: str = "") -> Sector:
     def kw_match(key: str) -> bool:
         return any(kw.lower() in text for kw in sectors.get(key, {}).get("keywords", []))
 
-    # explicit SIC membership for the domain sectors
-    for key in ("fintech", "healthcare", "edtech"):
+    def claims(key: str) -> bool:
         cfg = sectors.get(key, {})
         if sic in {str(s) for s in cfg.get("exclude_sic", [])}:
-            continue
-        if sic in {str(s) for s in cfg.get("sic", [])}:
-            return Sector(key)
+            return False
+        return sic in {str(s) for s in cfg.get("sic", [])}
 
-    # generic tech SIC: keywords decide the domain, default to saas
+    # generic tech SIC: keywords decide the domain; sectors that claim the
+    # SIC directly (saas in the default pack) are the fallback
     if sic in generic:
-        for key in ("fintech", "healthcare", "edtech"):
-            if kw_match(key):
-                return Sector(key)
-        if sic in {str(s) for s in sectors.get("saas", {}).get("sic", [])}:
-            return Sector.saas
+        claimers = [key for key in sectors if claims(key)]
+        for key in sectors:
+            if key not in claimers and kw_match(key):
+                return key
+        return claimers[0] if claimers else "other"
 
-    return Sector.other
+    # explicit SIC membership for the domain sectors
+    for key in sectors:
+        if claims(key):
+            return key
+
+    return "other"
 
 
 # ---------- resolution + screening ----------
@@ -332,7 +338,7 @@ def screen(
             stats["name_excluded"] += 1
             continue
         sector = classify_sector(slim["sic"], row.get("name", ""), slim["sic_description"])
-        if sector != Sector.other:
+        if sector != "other":
             sector_matched.append((row, slim))
     stats["sector_matched"] = len(sector_matched)
 

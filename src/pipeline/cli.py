@@ -15,6 +15,87 @@ console = Console()
 STATUS_ORDER = ["new", "enriched", "scored", "qualified", "disqualified", "contacts_found"]
 
 
+@app.callback()
+def main(
+    profile: str = typer.Option(
+        None, "--profile", envvar="AIPT_PROFILE",
+        help="Profile pack under profiles/<name>/ (default: built-in config/ pack)",
+    ),
+):
+    """AI-readiness pipeline for public micro-caps."""
+    from pipeline import config
+
+    config.activate_profile(profile)
+
+
+def _validate_profile_settings(settings: dict) -> tuple[list[str], list[str]]:
+    """Lightweight structural checks (settings has no schema) — returns
+    (errors, warnings)."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    sectors = settings.get("universe", {}).get("sectors", {})
+    if not sectors:
+        errors.append("universe.sectors is empty — need at least one sector")
+    scoring_cfg = settings.get("scoring", {})
+    weights = scoring_cfg.get("weights", {})
+    if not weights:
+        errors.append("scoring.weights is empty")
+    for k, v in weights.items():
+        if not isinstance(v, (int, float)):
+            errors.append(f"scoring.weights.{k} is not numeric: {v!r}")
+    caps = scoring_cfg.get("component_caps", {})
+    required_caps = {"intent", "capability_gap", "timing", "commercial_fit"}
+    missing = required_caps - caps.keys()
+    if missing:
+        errors.append(f"scoring.component_caps missing keys: {sorted(missing)}")
+    for k, v in caps.items():
+        if not isinstance(v, (int, float)):
+            errors.append(f"scoring.component_caps.{k} is not numeric: {v!r}")
+    if not missing and all(isinstance(v, (int, float)) for v in caps.values()):
+        total = sum(caps.values())
+        if total != 100:
+            warnings.append(f"scoring.component_caps sum to {total}, not 100 — totals won't be percentage-like")
+    for k in ("qualify_threshold", "disqualify_below"):
+        if not isinstance(scoring_cfg.get(k), (int, float)):
+            errors.append(f"scoring.{k} must be numeric")
+    return errors, warnings
+
+
+@app.command()
+def profile(
+    list_: bool = typer.Option(False, "--list", help="List available profile packs"),
+    show: bool = typer.Option(False, "--show", help="Show the active pack's resolved settings"),
+    validate: bool = typer.Option(False, "--validate", help="Validate the active pack's settings.yaml"),
+):
+    """Inspect or validate profile packs (ICP config directory overlays).
+    Not to be confused with a company's AI-adoption profile (models.Profile)."""
+    from pipeline import config
+
+    if list_:
+        active = "default" if config.PROFILE_DIR == config.DEFAULT_PROFILE_DIR else config.PROFILE_DIR.name
+        for name in config.list_profiles():
+            marker = " (active)" if name == active else ""
+            console.print(f"{name}{marker}")
+        return
+
+    if validate:
+        errors, warnings = _validate_profile_settings(config.SETTINGS)
+        for w in warnings:
+            console.print(f"[yellow]warning:[/yellow] {w}")
+        if errors:
+            for e in errors:
+                console.print(f"[red]error:[/red] {e}")
+            raise typer.Exit(1)
+        console.print("Profile settings valid ✔")
+        return
+
+    if show:
+        console.print_json(data=config.SETTINGS)
+        return
+
+    console.print("Use --list, --show, or --validate")
+
+
 @app.command()
 def status(brief: bool = typer.Option(False, "--brief", help="One-line funnel summary")):
     """Funnel counts, recent qualifications, recent runs."""
@@ -100,12 +181,12 @@ def ingest(
     cap_min, cap_max = uni.get("market_cap_min", 0), uni.get("market_cap_max", 0)
     for c in resolved:
         note = ""
-        if c.sector_bucket.value == "other":
+        if c.sector_bucket == "other":
             note = "outside target sectors"
         elif c.market_cap and not (cap_min <= c.market_cap <= cap_max):
             note = "outside cap band"
         table.add_row(
-            c.ticker, c.name[:36], c.sector_bucket.value,
+            c.ticker, c.name[:36], c.sector_bucket,
             f"${(c.market_cap or 0)/1e6:.0f}M" if c.market_cap else "?",
             c.exchange or "?", note,
         )
@@ -157,7 +238,7 @@ def discover(
     for col in ("ticker", "name", "sector", "market cap"):
         sample.add_column(col)
     for c in companies[:15]:
-        sample.add_row(c.ticker, c.name[:40], c.sector_bucket.value, f"${(c.market_cap or 0)/1e6:.0f}M")
+        sample.add_row(c.ticker, c.name[:40], c.sector_bucket, f"${(c.market_cap or 0)/1e6:.0f}M")
     console.print(sample)
 
     if dry_run:

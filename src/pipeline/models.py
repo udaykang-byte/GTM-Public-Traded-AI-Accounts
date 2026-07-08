@@ -5,7 +5,7 @@ from datetime import date
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 
 class Status(str, Enum):
@@ -15,14 +15,6 @@ class Status(str, Enum):
     qualified = "qualified"
     disqualified = "disqualified"
     contacts_found = "contacts_found"
-
-
-class Sector(str, Enum):
-    saas = "saas"
-    fintech = "fintech"
-    edtech = "edtech"
-    healthcare = "healthcare"
-    other = "other"
 
 
 class Profile(str, Enum):
@@ -39,7 +31,9 @@ class Company(BaseModel):
     exchange: str | None = None
     sic: str | None = None
     sic_description: str | None = None
-    sector_bucket: Sector = Sector.other
+    # free vocabulary (profile packs bring their own sector sets) — any
+    # lowercase string; unknown sectors warn downstream, never crash here
+    sector_bucket: str = "other"
     market_cap: float | None = None
     employee_count: int | None = None
     website: str | None = None
@@ -47,6 +41,11 @@ class Company(BaseModel):
     ipo_date: date | None = None
     status: Status = Status.new
     profile: Profile | None = None
+
+    @field_validator("sector_bucket", mode="before")
+    @classmethod
+    def _lowercase_sector(cls, v):
+        return str(v).lower() if v is not None else v
 
 
 class Signal(BaseModel):

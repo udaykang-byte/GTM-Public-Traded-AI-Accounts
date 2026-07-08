@@ -10,6 +10,12 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
+# Profile packs: config/ is the default (martechs.io) pack; profiles/<name>/
+# may override any subset of its files (per-file replace, never merged).
+PROFILES_ROOT = PROJECT_ROOT / "profiles"
+DEFAULT_PROFILE_DIR = PROJECT_ROOT / "config"
+PROFILE_DIR: Path = DEFAULT_PROFILE_DIR  # mutated by activate_profile()
+
 DATA_DIR = PROJECT_ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 QUEUE_DIR = DATA_DIR / "scoring_queue"
@@ -27,15 +33,52 @@ for _d in (DATA_DIR, CACHE_DIR, QUEUE_DIR, RESULTS_DIR, ARCHIVE_DIR, EXPORT_DIR,
     _d.mkdir(parents=True, exist_ok=True)
 
 
-def _load_yaml(name: str) -> dict:
-    path = PROJECT_ROOT / "config" / name
+def profile_file(name: str) -> Path:
+    """Resolve a config filename against the active profile pack, falling
+    back to the default config/ pack if the pack doesn't override it."""
+    override = PROFILE_DIR / name
+    if override.exists():
+        return override
+    return DEFAULT_PROFILE_DIR / name
+
+
+def _load_yaml_from(path: Path) -> dict:
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text()) or {}
 
 
-SETTINGS: dict = _load_yaml("settings.yaml")
-SERVICES: dict = _load_yaml("services.yaml").get("services", {})
+SETTINGS: dict = _load_yaml_from(profile_file("settings.yaml"))
+SERVICES: dict = _load_yaml_from(profile_file("services.yaml")).get("services", {})
+
+
+def activate_profile(name: str | None) -> None:
+    """Point PROFILE_DIR at profiles/<name> (or back at the default config/
+    pack for None/"default") and reload SETTINGS/SERVICES IN PLACE — other
+    modules hold a reference to the same dict objects via
+    `from pipeline.config import SETTINGS`, so mutate, never rebind."""
+    global PROFILE_DIR
+    if not name or name == "default":
+        PROFILE_DIR = DEFAULT_PROFILE_DIR
+    else:
+        pack_dir = PROFILES_ROOT / name
+        if not pack_dir.is_dir():
+            raise SystemExit(f"Unknown profile '{name}' — expected {pack_dir}")
+        PROFILE_DIR = pack_dir
+
+    new_settings = _load_yaml_from(profile_file("settings.yaml"))
+    new_services = _load_yaml_from(profile_file("services.yaml")).get("services", {})
+    SETTINGS.clear()
+    SETTINGS.update(new_settings)
+    SERVICES.clear()
+    SERVICES.update(new_services)
+
+
+def list_profiles() -> list[str]:
+    names = ["default"]
+    if PROFILES_ROOT.is_dir():
+        names += sorted(p.name for p in PROFILES_ROOT.iterdir() if p.is_dir())
+    return names
 
 
 def env(key: str, default: str | None = None) -> str | None:
