@@ -220,11 +220,16 @@ def classify_sector(sic: str, name: str, sic_description: str = "") -> str:
         return sic in {str(s) for s in cfg.get("sic", [])}
 
     # generic tech SIC: keywords decide the domain; sectors that claim the
-    # SIC directly (saas in the default pack) are the fallback
+    # SIC directly (saas in the default pack) are the fallback. A sector with
+    # generic_keyword_match: false only claims via its explicit sic list.
     if sic in generic:
         claimers = [key for key in sectors if claims(key)]
         for key in sectors:
-            if key not in claimers and kw_match(key):
+            if key in claimers:
+                continue
+            if not sectors.get(key, {}).get("generic_keyword_match", True):
+                continue
+            if kw_match(key):
                 return key
         return claimers[0] if claimers else "other"
 

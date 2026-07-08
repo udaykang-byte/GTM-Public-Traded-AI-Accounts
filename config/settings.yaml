@@ -13,6 +13,9 @@ universe:
     saas:
       sic: ["7372", "7371", "7370"]
       keywords: [software, saas, platform, cloud, application]
+      # generic_keyword_match: false -> this sector only claims a generic_tech_sic
+      # code via its explicit `sic` list, never via keywords (default: true)
+      generic_keyword_match: false
     fintech:
       # 6770 (blank checks) excluded 2026-07-05: SPAC shells, not operating fintechs
       sic: ["6199", "6141", "6153", "6159", "6162", "6172", "6282", "6099", "6022"]

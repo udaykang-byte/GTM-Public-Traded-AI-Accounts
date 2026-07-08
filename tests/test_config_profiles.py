@@ -130,3 +130,29 @@ def test_classify_sector_default_pack_behavior_unchanged():
     assert universe.classify_sector("7389", "Generic Services Co", "services") == "other"
     # healthcare exclude_sic: pure pharma R&D stays out
     assert universe.classify_sector("2834", "Pharma Co", "pharmaceutical preparations") == "other"
+
+
+def test_saas_never_keyword_claims_generic_sic():
+    """Reviewer counterexample: saas has generic_keyword_match: false, so a
+    generic SIC outside saas.sic must NOT become saas via keywords — old
+    enum-era code only keyword-matched fintech/healthcare/edtech here."""
+    from pipeline import universe
+
+    assert universe.classify_sector(
+        "7389", "CloudTech Software Solutions", "provides software services"
+    ) == "other"
+
+
+def test_generic_keyword_match_defaults_to_true(monkeypatch):
+    """Custom packs stay fully data-driven: without the key, a sector may
+    claim a generic SIC via keywords."""
+    from pipeline import universe
+
+    monkeypatch.setitem(
+        universe.SETTINGS, "universe",
+        {
+            "generic_tech_sic": ["7389"],
+            "sectors": {"widgets": {"sic": [], "keywords": ["widget"]}},
+        },
+    )
+    assert universe.classify_sector("7389", "Acme Widget Co", "widget platform") == "widgets"
