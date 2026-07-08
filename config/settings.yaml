@@ -86,6 +86,32 @@ scoring:
     capability_gap: 25   # E6 P4 + absence-of-execution logic
     timing: 25           # E3 E4 E7
     commercial_fit: 20   # E5 E9 P1 P2 P5 + sector/band fit
+  # v3: bonus applied to the deterministic BASE score only (never the LLM
+  # verdict) when a company's evidence spans >= min_components distinct
+  # scoring components (intent/capability_gap/timing/commercial_fit) — stacked
+  # signals are a stronger buying signal than the same weight in one bucket.
+  stacking:
+    min_components: 3
+    bonus: 5
+  # v3: SLA/urgency bucket riding on each packet signal (informational context
+  # for the scorer only — never changes the deterministic math). Buckets are
+  # by signal age_days; a signal with no observed_at gets urgency: null.
+  urgency:
+    windows:
+      hot: 30    # age_days <= this -> "hot"
+      warm: 90   # <= this -> "warm"; older -> "cold"
+  # v3: composite ordering key for /people and messages --prepare, computed at
+  # commit from verdict total + base stacking bonus + strongest fresh angle.
+  # priority = total*total_weight + stacking_bonus*stacking_weight +
+  #            max_angle_strength*angle_strength_weight
+  priority:
+    total_weight: 1.0
+    stacking_weight: 1.0
+    angle_strength_weight: 10.0
+  # v3: T1 requires total >= t1_min AND qualified; T2 = qualified below it;
+  # T3 = review band; T4 = disqualified. Computed at commit, never an LLM output.
+  tiers:
+    t1_min: 80
 
 angles:
   # outreach-angle freshness windows: event older than this -> stale, never

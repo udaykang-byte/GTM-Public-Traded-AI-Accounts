@@ -55,3 +55,5 @@ Validates every result against the schema (invalid ones are reported — re-run 
 ## Step 4 — report
 
 Summarize: newly qualified (ticker, total, profile, top service fit, one-line reasoning), the review band, disqualified count. Suggest `/people` for qualified accounts. Never change thresholds yourself — propose to the user (`config/settings.yaml` → `scoring`).
+
+**Tiering + priority (v3)**: `--commit` now computes a `tier` for every processed company — T1 (total ≥ `scoring.tiers.t1_min`, default 80, AND qualified), T2 (qualified below that bar), T3 (review band), T4 (disqualified) — stored on both the `scores` row and the company's `tier` column. It also stores a `priority` composite (verdict total + a deterministic-base-score stacking bonus for evidence spanning ≥3 components + the strongest fresh outreach angle). `/people` and `messages --prepare` process companies in `(tier asc, priority desc)` order, so the strongest accounts get worked first when a per-run cap bites.

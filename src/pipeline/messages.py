@@ -30,6 +30,7 @@ from pipeline.config import (
     SETTINGS,
     profile_file,
 )
+from pipeline.db import order_by_tier_priority
 from pipeline.models import MessageSequence
 
 # Deterministic QA copy of the banned list in config/outbound_copywriter.md
@@ -152,6 +153,13 @@ def prepare(
     else:
         companies = db.get_companies(status="contacts_found")
 
+    # fetched once up front (needed to sort) and reused in the loop below —
+    # avoids a second db.latest_score round trip per company
+    scores_by_cik = {int(c["cik"]): db.latest_score(int(c["cik"])) for c in companies}
+    if not ticker:
+        priority_by_cik = {cik: (s or {}).get("priority") for cik, s in scores_by_cik.items()}
+        companies = order_by_tier_priority(companies, priority_by_cik)
+
     cap = int(_cfg().get("max_per_run", 40))
     cap = min(limit, cap) if limit else cap
 
@@ -194,7 +202,7 @@ def prepare(
         if len(written) >= cap:
             break
         cik = int(company["cik"])
-        score = db.latest_score(cik)
+        score = scores_by_cik.get(cik)
         fits = (score or {}).get("service_fit") or []
         if not score or not fits:
             skips["no_score"].append(company["ticker"])

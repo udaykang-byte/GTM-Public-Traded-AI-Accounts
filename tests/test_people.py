@@ -56,3 +56,22 @@ def test_find_people_batch_isolates_parse_failures(monkeypatch):
 
 def test_find_people_batch_empty_input():
     assert people.find_people_batch([]) == []
+
+
+# ---------- v3: select_targets (tier asc, priority desc, then capped) ----------
+
+def test_select_targets_orders_by_tier_then_priority():
+    companies = [
+        {"cik": 1, "tier": "T2"},
+        {"cik": 2, "tier": "T1"},
+        {"cik": 3, "tier": "T1"},
+    ]
+    priority = {1: 99.0, 2: 10.0, 3: 50.0}
+    result = people.select_targets(companies, priority, cap=2)
+    assert [c["cik"] for c in result] == [3, 2]
+
+
+def test_select_targets_respects_cap():
+    companies = [{"cik": 1, "tier": "T1"}, {"cik": 2, "tier": "T1"}]
+    result = people.select_targets(companies, {}, cap=1)
+    assert len(result) == 1

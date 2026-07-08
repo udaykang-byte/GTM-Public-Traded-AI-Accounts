@@ -116,6 +116,61 @@ invent angles from signals.
 """
 
 
+def stacking_bonus(signals: list[dict], cfg: dict | None = None) -> float:
+    """Bonus applied to the deterministic BASE score (never the LLM verdict)
+    when evidence spans several distinct scoring components — signals stacked
+    across intent/timing/capability_gap/commercial_fit are a stronger buying
+    signal than the same total weight concentrated in one component."""
+    cfg = cfg if cfg is not None else SETTINGS.get("scoring", {}).get("stacking", {})
+    min_components = int(cfg.get("min_components", 3))
+    bonus = float(cfg.get("bonus", 5))
+    hit = {COMPONENT_OF[s["type"]] for s in signals if s.get("type") in COMPONENT_OF}
+    return bonus if len(hit) >= min_components else 0.0
+
+
+def urgency_of(age_days: int | None, cfg: dict | None = None) -> str | None:
+    """SLA/urgency bucket for a signal's age — informational context riding on
+    the packet for the scorer, never fed into the deterministic math. None
+    when the signal has no observed_at date."""
+    if age_days is None:
+        return None
+    cfg = cfg if cfg is not None else SETTINGS.get("scoring", {}).get("urgency", {}).get("windows", {})
+    hot = int(cfg.get("hot", 30))
+    warm = int(cfg.get("warm", 90))
+    if age_days <= hot:
+        return "hot"
+    if age_days <= warm:
+        return "warm"
+    return "cold"
+
+
+def tier_of(total: float, bucket: str, cfg: dict | None = None) -> str:
+    """Pure tier classification, computed at commit time from the verdict
+    total + gate bucket — tier is never an LLM output. T1 = qualified with
+    total >= tiers.t1_min; T2 = qualified below that bar; T3 = review band;
+    T4 = disqualified. 'kept' (already-qualified/contacts_found, protected
+    from demotion) is treated the same as 'qualified'."""
+    cfg = cfg if cfg is not None else SETTINGS.get("scoring", {}).get("tiers", {})
+    t1_min = float(cfg.get("t1_min", 80))
+    if bucket in ("qualified", "kept"):
+        return "T1" if total >= t1_min else "T2"
+    if bucket == "disqualified":
+        return "T4"
+    return "T3"  # review (or any other/unknown bucket)
+
+
+def priority_score(total: float, stacking: float, max_angle_strength: float, cfg: dict | None = None) -> float:
+    """Composite ordering key for /people and messages --prepare: mostly the
+    verdict total, nudged by stacked evidence and the strongest fresh outreach
+    angle — a ready hook beats a cold qualified account of the same score.
+    Weights: scoring.priority.{total_weight,stacking_weight,angle_strength_weight}."""
+    cfg = cfg if cfg is not None else SETTINGS.get("scoring", {}).get("priority", {})
+    tw = float(cfg.get("total_weight", 1.0))
+    sw = float(cfg.get("stacking_weight", 1.0))
+    aw = float(cfg.get("angle_strength_weight", 10.0))
+    return round(total * tw + stacking * sw + max_angle_strength * aw, 2)
+
+
 def base_components(signals: list[dict]) -> dict:
     caps = SETTINGS.get("scoring", {}).get("component_caps", {})
     totals = {"intent": 0.0, "capability_gap": 0.0, "timing": 0.0, "commercial_fit": 0.0}
@@ -127,7 +182,11 @@ def base_components(signals: list[dict]) -> dict:
         if comp in totals:
             totals[comp] = min(totals[comp], float(cap))
     totals = {k: round(v, 1) for k, v in totals.items()}
-    totals["total"] = round(sum(totals.values()), 1)
+    bonus = stacking_bonus(signals)
+    totals["stacking_bonus"] = bonus
+    totals["total"] = round(
+        sum(totals[c] for c in ("intent", "capability_gap", "timing", "commercial_fit")) + bonus, 1
+    )
     return totals
 
 
@@ -200,6 +259,7 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
         for s in slim_signals:
             s["age_days"] = _signal_age_days(s)
             s["effective_weight"] = effective_weight(s)
+            s["urgency"] = urgency_of(s["age_days"])
         derived = _derived_cohort_signal(company, slim_signals, peers, signals_by_cik)
         if derived:
             slim_signals.append(derived)
@@ -302,6 +362,15 @@ def commit(run_id: str | None = None) -> dict:
             new_status, bucket = Status(company["status"]), "kept"
             gate_reason = ""
 
+        # tier/priority are computed here, never LLM outputs — base_stacking
+        # reads defensively since packets prepared before this feature shipped
+        # have no stacking_bonus key
+        tier = tier_of(total, bucket)
+        base_stacking = float((packet.get("base_score") or {}).get("stacking_bonus", 0) or 0)
+        angles = packet.get("angles") or []
+        max_angle_strength = max((a.get("strength") or 0) for a in angles) if angles else 0.0
+        priority = priority_score(total, base_stacking, max_angle_strength)
+
         db.insert_score({
             "company_cik": company["cik"],
             "run_id": run_id,
@@ -320,10 +389,12 @@ def commit(run_id: str | None = None) -> dict:
             "angle_ranking": [r.model_dump(mode="json") for r in verdict.angle_ranking],
             "primary_angle": verdict.primary_angle.model_dump(mode="json") if verdict.primary_angle else None,
             "gate_reason": gate_reason,
+            "tier": tier,
+            "priority": priority,
             "model": "claude-code/haiku-subagent",
         })
 
-        db.set_status(company["cik"], new_status, profile=verdict.profile.value)
+        db.set_status(company["cik"], new_status, profile=verdict.profile.value, tier=tier)
         item = {"ticker": ticker, "total": total, "profile": verdict.profile.value}
         if gate_reason:
             item["gate_reason"] = gate_reason

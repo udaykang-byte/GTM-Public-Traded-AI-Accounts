@@ -74,16 +74,43 @@ def delete_new_companies(ciks: list[int]) -> int:
     return deleted
 
 
-def set_status(cik: int, status: Status | str, profile: str | None = None) -> None:
+def set_status(cik: int, status: Status | str, profile: str | None = None, tier: str | None = None) -> None:
     patch: dict = {"status": status.value if isinstance(status, Status) else status}
     if profile is not None:
         patch["profile"] = profile
+    if tier is not None:
+        patch["tier"] = tier
     client().table("companies").update(patch).eq("cik", cik).execute()
 
 
 def status_counts() -> Counter:
     rows = client().table("companies").select("status").execute().data or []
     return Counter(r["status"] for r in rows)
+
+
+def tier_counts() -> Counter:
+    """Company counts per tier. NULL (pre-v3 rows, or any row never scored)
+    reports as T3 — see order_by_tier_priority for the same convention."""
+    rows = client().table("companies").select("tier").execute().data or []
+    return Counter((r.get("tier") or "T3") for r in rows)
+
+
+# ---------- tier/priority ordering (v3) ----------
+
+_TIER_RANK = {"T1": 1, "T2": 2, "T3": 3, "T4": 4}
+
+
+def order_by_tier_priority(companies: list[dict], priority_by_cik: dict[int, float | None]) -> list[dict]:
+    """Sort companies by (tier asc, priority desc) — used by /people and
+    messages --prepare to work the strongest accounts first when a per-run
+    cap bites. Pure/NULL-safe: missing or unrecognized tier sorts as T3 (the
+    review-band position); missing priority sorts last within its tier."""
+    def key(c: dict) -> tuple[int, float]:
+        rank = _TIER_RANK.get(c.get("tier") or "T3", 3)
+        pr = priority_by_cik.get(int(c["cik"]))
+        return (rank, -(float(pr) if pr is not None else float("-inf")))
+
+    return sorted(companies, key=key)
 
 
 # ---------- signals ----------

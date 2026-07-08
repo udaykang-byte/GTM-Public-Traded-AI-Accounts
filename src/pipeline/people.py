@@ -7,6 +7,7 @@ ONLY when publicly published somewhere citable; no guessing or pattern inference
 from __future__ import annotations
 
 from pipeline.config import SETTINGS
+from pipeline.db import order_by_tier_priority
 from pipeline.models import Contact
 from pipeline.parallel_client import run_task, run_tasks_batch
 
@@ -135,3 +136,10 @@ def find_people_batch(items: list[tuple[dict, list[dict]]]) -> list[tuple[list[C
             except Exception as exc:
                 out.append(exc)
     return out
+
+
+def select_targets(companies: list[dict], priority_by_cik: dict[int, float | None], cap: int) -> list[dict]:
+    """Qualified companies ready for people search, ordered by (tier asc,
+    priority desc) — see db.order_by_tier_priority — then capped so the
+    strongest accounts get worked first when the per-run cap bites."""
+    return order_by_tier_priority(companies, priority_by_cik)[: max(cap, 0)]

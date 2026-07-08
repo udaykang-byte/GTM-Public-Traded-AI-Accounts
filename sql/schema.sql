@@ -78,6 +78,10 @@ alter table scores add column if not exists why_now text not null default '';
 alter table scores add column if not exists angle_ranking jsonb not null default '[]'::jsonb;
 alter table scores add column if not exists primary_angle jsonb;
 alter table scores add column if not exists gate_reason text not null default '';
+-- v3: tier (T1-T4, mirrors companies.tier at the time of this score) and
+-- priority (composite ordering key — see scoring.priority_score)
+alter table scores add column if not exists tier text;
+alter table scores add column if not exists priority numeric;
 
 create table if not exists angles (
   id             bigint generated always as identity primary key,

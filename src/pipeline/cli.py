@@ -124,6 +124,25 @@ def status(brief: bool = typer.Option(False, "--brief", help="One-line funnel su
         table.add_row(s, str(counts.get(s, 0)))
     console.print(table)
 
+    try:
+        tiers = db.tier_counts()
+    except Exception as exc:
+        if "does not exist" in str(exc) or "PGRST205" in str(exc):
+            console.print(
+                "[dim]Tier breakdown needs the v3 schema (companies.tier) — "
+                "run `apply-schema` to see it.[/dim]"
+            )
+            tiers = None
+        else:
+            raise
+    if tiers is not None:
+        tt = Table(title="Tier breakdown (v3; NULL/unscored counts as T3)")
+        tt.add_column("tier")
+        tt.add_column("companies", justify="right")
+        for t in ("T1", "T2", "T3", "T4"):
+            tt.add_row(t, str(tiers.get(t, 0)))
+        console.print(tt)
+
     qualified = db.recent_qualified()
     if qualified:
         qt = Table(title="Recently qualified")
@@ -538,16 +557,21 @@ def people(
     """Find decision-makers for qualified accounts (Parallel research, paid)."""
     from pipeline import db
     from pipeline.config import SETTINGS
-    from pipeline.people import find_people_batch, target_roles
+    from pipeline.people import find_people_batch, select_targets, target_roles
 
     cap = int(SETTINGS.get("people", {}).get("max_companies_per_run", 10))
+    effective_cap = cap if limit is None else min(limit, cap)
     if ticker:
         row = db.get_company_by_ticker(ticker)
         if not row:
             raise typer.BadParameter(f"{ticker} not in pipeline")
         targets = [row]
     else:
-        targets = db.get_companies(status="qualified", limit=(cap if limit is None else min(limit, cap)))
+        # fetch the full qualified pool (no DB-side limit) so tier/priority
+        # ordering is correct before the per-run cap is applied
+        pool = db.get_companies(status="qualified")
+        priority_by_cik = {int(c["cik"]): (db.latest_score(int(c["cik"])) or {}).get("priority") for c in pool}
+        targets = select_targets(pool, priority_by_cik, effective_cap)
 
     if not targets:
         console.print("No qualified companies awaiting people search.")

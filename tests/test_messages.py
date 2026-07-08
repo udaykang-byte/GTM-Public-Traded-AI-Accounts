@@ -309,6 +309,26 @@ def test_prepare_respects_limit(dirs):
     assert len(written) == 1
 
 
+def test_prepare_orders_companies_by_tier_priority_before_cap(dirs, monkeypatch):
+    """A T1 company must be worked before a T2 company even when it's later
+    in the raw DB order — see db.order_by_tier_priority."""
+    q, r, a = dirs
+    company_lo = {**COMPANY, "cik": 1, "ticker": "TST", "tier": "T2"}
+    company_hi = {**COMPANY, "cik": 2, "ticker": "HI", "tier": "T1"}
+    monkeypatch.setattr(messages.db, "get_companies",
+                        lambda status=None, **kw: [dict(company_lo), dict(company_hi)])
+    monkeypatch.setattr(messages.db, "get_contacts",
+                        lambda cik: [dict(CONTACT_CEO)])
+    monkeypatch.setattr(messages.db, "latest_score", lambda cik: dict(SCORE))
+    monkeypatch.setattr(messages.db, "all_angles",
+                        lambda: {1: [dict(ANGLE_ROW)], 2: [{**ANGLE_ROW, "company_cik": 2}]})
+
+    written, _ = messages.prepare(limit=1)  # cap of 1 packet total across companies
+
+    assert len(written) == 1
+    assert "HI" in written[0]
+
+
 def test_prepare_dry_run_writes_nothing(dirs):
     q, r, a = dirs
     written, _ = messages.prepare(dry_run=True)

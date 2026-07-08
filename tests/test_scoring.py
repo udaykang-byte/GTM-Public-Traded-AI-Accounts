@@ -37,8 +37,8 @@ class FakeDB:
     def insert_score(self, row):
         self.scores.append(row)
 
-    def set_status(self, cik, status, profile=None):
-        self.statuses.append((cik, str(status), profile))
+    def set_status(self, cik, status, profile=None, tier=None):
+        self.statuses.append((cik, str(status), profile, tier))
 
     def all_angles(self):
         return {1: [dict(r) for r in self.angles_rows]} if self.angles_rows else {}
@@ -216,3 +216,147 @@ def test_hallucinated_primary_angle_stripped(dirs):
     _run_commit(dirs, [dict(ANGLE_ROW)], v)
     assert scoring.db.scores[0]["primary_angle"] is None
     assert scoring.db.scores[0]["angle_ranking"] == []
+
+
+# ---------- v3: stacking bonus (base score only, never the LLM verdict) ----------
+
+def test_stacking_bonus_applies_when_min_components_hit():
+    signals = [{"type": "E1"}, {"type": "E3"}, {"type": "E5"}]  # intent/timing/commercial_fit
+    assert scoring.stacking_bonus(signals, cfg={"min_components": 3, "bonus": 5}) == 5.0
+
+
+def test_stacking_bonus_zero_below_min_components():
+    signals = [{"type": "E1"}, {"type": "E2"}]  # both intent -> 1 distinct component
+    assert scoring.stacking_bonus(signals, cfg={"min_components": 3, "bonus": 5}) == 0.0
+
+
+def test_stacking_bonus_ignores_signal_types_with_no_component():
+    signals = [{"type": "E1"}, {"type": "E3"}, {"type": "UNKNOWN"}]
+    assert scoring.stacking_bonus(signals, cfg={"min_components": 3, "bonus": 5}) == 0.0
+
+
+def test_base_components_adds_stacking_bonus_to_total(monkeypatch):
+    monkeypatch.setitem(scoring.SETTINGS.setdefault("scoring", {}), "stacking",
+                         {"min_components": 2, "bonus": 5})
+    signals = [
+        {"type": "E1", "weight": 10, "observed_at": None},
+        {"type": "E3", "weight": 10, "observed_at": None},
+    ]
+    result = scoring.base_components(signals)
+    assert result["stacking_bonus"] == 5.0
+    assert result["total"] == 10 + 10 + 5
+
+
+def test_base_components_no_bonus_below_threshold(monkeypatch):
+    monkeypatch.setitem(scoring.SETTINGS.setdefault("scoring", {}), "stacking",
+                         {"min_components": 3, "bonus": 5})
+    signals = [{"type": "E1", "weight": 10, "observed_at": None}]
+    result = scoring.base_components(signals)
+    assert result["stacking_bonus"] == 0.0
+    assert result["total"] == 10
+
+
+# ---------- v3: urgency metadata (informational, optional, never in the math) ----------
+
+def test_urgency_of_buckets():
+    cfg = {"hot": 30, "warm": 90}
+    assert scoring.urgency_of(10, cfg=cfg) == "hot"
+    assert scoring.urgency_of(30, cfg=cfg) == "hot"
+    assert scoring.urgency_of(31, cfg=cfg) == "warm"
+    assert scoring.urgency_of(90, cfg=cfg) == "warm"
+    assert scoring.urgency_of(91, cfg=cfg) == "cold"
+    assert scoring.urgency_of(None, cfg=cfg) is None
+
+
+def test_prepare_adds_urgency_to_signals(dirs):
+    q, r, a = dirs
+    scoring.prepare()
+    packet = json.loads((q / "TST.json").read_text())
+    assert packet["signals"][0]["urgency"] in ("hot", "warm", "cold")
+
+
+def test_commit_handles_signals_without_urgency_field(dirs):
+    """Old queue packets predate the urgency field — commit must not require it."""
+    q, r, a = dirs
+    scoring.db.angles_rows = [dict(ANGLE_ROW)]
+    scoring.prepare()
+    packet_path = q / "TST.json"
+    packet = json.loads(packet_path.read_text())
+    for s in packet["signals"]:
+        s.pop("urgency", None)
+    packet_path.write_text(json.dumps(packet))
+    (r / "TST.json").write_text(json.dumps(make_verdict()))
+    summary = scoring.commit(run_id="t")
+    assert summary["invalid"] == []
+
+
+def test_commit_handles_packet_missing_stacking_bonus_key(dirs):
+    """Old queue packets predate the stacking bonus — commit must not KeyError."""
+    q, r, a = dirs
+    scoring.db.angles_rows = [dict(ANGLE_ROW)]
+    scoring.prepare()
+    packet_path = q / "TST.json"
+    packet = json.loads(packet_path.read_text())
+    del packet["base_score"]["stacking_bonus"]
+    packet_path.write_text(json.dumps(packet))
+    (r / "TST.json").write_text(json.dumps(make_verdict()))
+    summary = scoring.commit(run_id="t")
+    assert summary["invalid"] == []
+    assert scoring.db.scores[0]["priority"] is not None
+
+
+# ---------- v3: tier_of (pure; T1 >= tiers.t1_min, T2 qualified below it,
+# T3 review, T4 disqualified; 'kept' counts as qualified) ----------
+
+@pytest.mark.parametrize("total,bucket,expected", [
+    (44, "disqualified", "T4"),
+    (45, "review", "T3"),
+    (64, "review", "T3"),
+    (65, "qualified", "T2"),
+    (79, "qualified", "T2"),
+    (80, "qualified", "T1"),
+    (85, "kept", "T1"),
+    (50, "kept", "T2"),
+])
+def test_tier_of_boundaries(total, bucket, expected):
+    assert scoring.tier_of(total, bucket, cfg={"t1_min": 80}) == expected
+
+
+def test_tier_of_defaults_t1_min_80():
+    assert scoring.tier_of(80, "qualified") == "T1"
+    assert scoring.tier_of(79, "qualified") == "T2"
+
+
+# ---------- v3: priority_score (composite ordering key) ----------
+
+def test_priority_score_weights():
+    cfg = {"total_weight": 1.0, "stacking_weight": 1.0, "angle_strength_weight": 10.0}
+    assert scoring.priority_score(70, 5, 0.8, cfg=cfg) == 70 + 5 + 8.0
+
+
+def test_priority_score_zero_inputs():
+    cfg = {"total_weight": 1.0, "stacking_weight": 1.0, "angle_strength_weight": 10.0}
+    assert scoring.priority_score(0, 0, 0, cfg=cfg) == 0.0
+
+
+# ---------- v3: commit stores tier + priority end-to-end ----------
+
+@pytest.mark.parametrize("intent,capg,timing,comm,expected_bucket,expected_tier", [
+    (9, 10, 15, 10, "disqualified", "T4"),   # total 44
+    (10, 10, 15, 10, "review", "T3"),        # total 45
+    (19, 15, 20, 10, "review", "T3"),        # total 64
+    (20, 15, 20, 10, "qualified", "T2"),     # total 65
+    (24, 20, 25, 10, "qualified", "T2"),     # total 79
+    (25, 20, 25, 10, "qualified", "T1"),     # total 80
+])
+def test_commit_stores_tier_at_boundaries(dirs, intent, capg, timing, comm, expected_bucket, expected_tier):
+    v = make_verdict(intent=intent, capability_gap=capg, timing=timing, commercial_fit=comm)
+    summary = _run_commit(dirs, [dict(ANGLE_ROW)], v)
+    assert any(i["ticker"] == "TST" for i in summary[expected_bucket])
+    assert scoring.db.scores[-1]["tier"] == expected_tier
+    assert scoring.db.statuses[-1][-1] == expected_tier
+
+
+def test_commit_stores_priority_on_score_row(dirs):
+    _run_commit(dirs, [dict(ANGLE_ROW)], make_verdict())
+    assert isinstance(scoring.db.scores[-1]["priority"], (int, float))
