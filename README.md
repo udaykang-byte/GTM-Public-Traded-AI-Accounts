@@ -1,5 +1,9 @@
 # AIPT — AI-Readiness Pipeline for Public Micro-Caps
 
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+![Tests: pytest](https://img.shields.io/badge/tests-pytest-brightgreen)
+
 AIPT finds US-listed micro-cap companies (Fintech, Edtech, Healthcare, SaaS) that show
 public evidence they need AI services, scores that evidence with cited reasoning, and
 surfaces decision-maker contacts — turning SEC filings and web research into a ranked,
@@ -72,8 +76,8 @@ the module map and design decisions.
 ### Setup
 
 ```bash
-git clone https://github.com/udaykang-byte/aipt-pipeline.git
-cd aipt-pipeline
+git clone https://github.com/udaykang-byte/GTM-Public-Traded-AI-Accounts.git
+cd GTM-Public-Traded-AI-Accounts
 uv sync
 
 cp .env.example .env        # then fill in the values — see comments in the file
@@ -169,15 +173,39 @@ data/                # gitignored: caches, scoring queue/results, exports
   through Claude Code Haiku subagents. The OpenRouter provider in
   `src/pipeline/llm.py` is the v2 path.
 
+## Adapting it to your own services
+
+AIPT ships configured for martechs.io, but everything vendor-specific is
+config — no code changes needed to point it at a different services business:
+
+- `config/services.yaml` — swap in your own service catalog. Service-fit
+  mapping, decision-maker role targeting (`people`), and message drafting all
+  key off it.
+- `config/outbound_copywriter.md` — your voice, offer, and proof points. The
+  message-drafting subagents follow this file verbatim, and its banned-words
+  list pairs with the deterministic QA gate in `src/pipeline/messages.py`.
+- `config/settings.yaml` — universe band (market-cap range, sectors → SIC
+  codes), signal weights, qualify/disqualify thresholds, per-run spend caps.
+
+The signal taxonomy itself ([docs/SIGNALS.md](docs/SIGNALS.md)) is
+vendor-agnostic — it detects public evidence of AI need; what you pitch
+against that evidence is up to your catalog.
+
 ## Contributing
 
 The suite runs in under a second (`uv run pytest`) — keep it green. Conventions,
 verification steps, and the PR flow are in [CONTRIBUTING.md](CONTRIBUTING.md).
 If you use Claude Code, the repo ships with stage skills (`/status`, `/enrich`,
-`/score`, …) that encode the correct orchestration for each pipeline stage.
+`/score`, `/outreach`, …) that encode the correct orchestration for each
+pipeline stage.
+
+## License
+
+[MIT](LICENSE).
 
 ---
 
-Internal martechs.io project. Scope stops at drafted outreach sequences
-(qualified accounts + contacts + per-contact message drafts) — no sending,
-no CRM pushes (that's v2 sub-project 3).
+Built at [martechs.io](https://martechs.io). Scope stops at drafted outreach
+sequences (qualified accounts + contacts + per-contact message drafts) — no
+sending, no CRM pushes. AIPT reads only public data (SEC filings, public web
+research); nothing it produces is investment advice.

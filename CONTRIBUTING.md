@@ -36,13 +36,19 @@ can't damage production data.
 - **Respect the Parallel budget**: every Parallel call path honors the per-run
   caps in `config/settings.yaml`. Use `--dry-run` first on new batches; never
   loop Parallel calls outside the caps.
-- **No paid LLM APIs in v1** — bulk scoring reasoning runs through Claude Code
-  Haiku subagents (see `.claude/skills/score/`). `llm.py`'s OpenRouter provider
-  is the v2 path.
+- **No paid LLM APIs in v1** — bulk scoring reasoning and outreach copywriting
+  run through Claude Code Haiku subagents (see `.claude/skills/score/` and
+  `.claude/skills/outreach/`). `llm.py`'s OpenRouter provider is the v2 path.
 - **Qualification thresholds are human decisions** — propose changes to
   `config/settings.yaml`, don't silently edit them.
-- **v1 scope stops at qualified accounts + contacts** — no outreach message
-  generation, no sending, no CRM pushes.
+- **The message QA gate is never relaxed to make a draft pass** — the
+  `BANNED_WORDS` list, subject-shape checks, and packet-facts-only checks in
+  `src/pipeline/messages.py` block bad drafts by design; fix the draft, not the
+  gate. Copy voice decisions live in `config/outbound_copywriter.md` — propose
+  changes there too, don't silently edit.
+- **Scope stops at drafted outreach sequences** — qualified accounts, contacts,
+  and per-contact message drafts. No sending, no CRM pushes (that's a future
+  sub-project).
 
 ## Tests
 
@@ -54,8 +60,13 @@ write the failing test first.
 ## Working with Claude Code
 
 The repo ships its Claude Code setup in `.claude/`: stage skills
-(`/status`, `/discover`, `/ingest`, `/enrich`, `/score`, `/people`) that encode
-the correct orchestration per stage, a session hook that shows funnel state, and
-a post-edit hook that runs the test suite automatically. Prefer the skills over
-hand-rolling stage commands — especially `/score`, which manages the subagent
-fan-out.
+(`/status`, `/discover`, `/ingest`, `/enrich`, `/score`, `/people`,
+`/outreach`) that encode the correct orchestration per stage, a session hook
+that shows funnel state, and a post-edit hook that runs the test suite
+automatically. Prefer the skills over hand-rolling stage commands — especially
+`/score` and `/outreach`, which manage the subagent fan-out.
+
+## License
+
+The project is [MIT-licensed](LICENSE); by contributing you agree that your
+contributions are licensed under the same terms.
