@@ -26,6 +26,9 @@ create table if not exists companies (
 create index if not exists companies_status_idx on companies (status);
 create index if not exists companies_ticker_idx on companies (ticker);
 create index if not exists companies_sector_idx on companies (sector_bucket);
+-- migration: sector_bucket becomes free-form text (profile packs bring their
+-- own sector vocabulary) — widening only, existing rows unaffected.
+alter table companies drop constraint if exists companies_sector_bucket_check;
 
 create table if not exists signals (
   id             bigint generated always as identity primary key,
