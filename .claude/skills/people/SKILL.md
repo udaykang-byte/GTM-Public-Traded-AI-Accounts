@@ -19,7 +19,9 @@ uv run python -m pipeline people --limit 5
 uv run python -m pipeline people --ticker XYZ
 ```
 
-How targeting works: each qualified company's latest `service_fit` picks target roles from config `people.roles_by_service` (e.g. lead-gen fit → CMO/CRO/VP Marketing; custom agents → CTO/CIO), plus `always_include_roles` (CEO — micro-caps often buy top-down). One Parallel task per company researches names, exact titles, LinkedIn URLs, and **publicly listed** emails only (source URL + confidence stored; no guessing, no pattern-inventing).
+How targeting works: each qualified company's latest `service_fit` picks target roles — from `config/personas.yaml`'s `services` mapping when the active pack has one (e.g. lead-gen fit → CMO/CRO/VP Marketing; custom agents → CTO/CIO), else the legacy flat `people.roles_by_service` list — plus `always_include_roles` (CEO — micro-caps often buy top-down). One Parallel task per company researches names, exact titles, LinkedIn URLs, and **publicly listed** emails only (source URL + confidence stored; no guessing, no pattern-inventing).
+
+Personas also carry pains/language per role (not just target titles) — `/outreach` attaches the matched persona's pains and language to each contact's message packet for personalization, so a contact's `role_bucket` (even a legacy value like "CEO" already in the DB) or title is enough to pull role-specific copy material later.
 
 Run mechanics:
 - **Run multi-account batches in the background** and report from the final stats + DB — tasks are created up front and polled together, so a 10-account batch ≈ one task's duration (~2–4 min).

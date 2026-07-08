@@ -19,6 +19,13 @@ plus `_shared.json` (copywriter framework + services catalog + output schema + h
 rules). Companies without a fresh angle are skipped and reported — never message on
 a stale hook. Use `--ticker X` for one company, `--force` to regenerate existing drafts.
 
+Each packet also carries a `persona` block (pains, language, committee_role,
+seniority) resolved from `config/personas.yaml` for that contact's role_bucket/title
+— null if nothing matches. `_shared.json`'s hard rules tell the copywriter to use the
+persona's pains/language as raw material, never to invent pains beyond it; a null
+persona just means write from the packet's angles and verdict alone. Packets from
+before this existed simply have no `persona` key — `messages --commit` handles both.
+
 ## Step 2 — spawn Haiku subagents to write copy
 
 List queued packets (`data/message_queue/*.json`, ignore `_shared.json`), then spawn
