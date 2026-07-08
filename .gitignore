@@ -16,5 +16,8 @@ dist/
 .claude/settings.local.json
 .superpowers/
 
+# internal planning docs (plans/specs stay local — readers get README + docs/ + skills)
+docs/superpowers/
+
 # os
 .DS_Store
