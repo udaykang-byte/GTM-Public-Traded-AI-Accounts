@@ -158,9 +158,15 @@ def ingest(
     tickers: str = typer.Argument("", help="Comma-separated tickers, e.g. 'ABCD,EFGH'"),
     csv: Path = typer.Option(None, "--csv", help="CSV file with a 'ticker' column"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    force: bool = typer.Option(
+        False, "--force",
+        help="Bypass the L1 prescreen (customer/competitor exclusions, cap band, exchange/OTC, shell-name heuristics)",
+    ),
 ):
     """Add user-provided companies to the pipeline (overrides the screen)."""
-    from pipeline import db, universe
+    from pipeline import db, prescreen, universe
+    from pipeline.config import SETTINGS
+    from pipeline.models import Status
 
     wanted: list[str] = [t for t in tickers.split(",") if t.strip()]
     if csv:
@@ -177,22 +183,32 @@ def ingest(
     table = Table(title="Resolved companies")
     for col in ("ticker", "name", "sector", "market cap", "exchange", "note"):
         table.add_column(col)
-    uni = __import__("pipeline.config", fromlist=["SETTINGS"]).SETTINGS.get("universe", {})
+    uni = SETTINGS.get("universe", {})
     cap_min, cap_max = uni.get("market_cap_min", 0), uni.get("market_cap_max", 0)
+    dq_reasons: dict[str, str] = {}
     for c in resolved:
-        note = ""
+        reason = None if force else prescreen.check(c.model_dump(), SETTINGS)
+        notes = []
         if c.sector_bucket == "other":
-            note = "outside target sectors"
+            notes.append("outside target sectors")
         elif c.market_cap and not (cap_min <= c.market_cap <= cap_max):
-            note = "outside cap band"
+            notes.append("outside cap band")
+        if reason:
+            dq_reasons[c.ticker] = reason
+            notes.append(f"[red]DQ: {reason}[/red]")
         table.add_row(
             c.ticker, c.name[:36], c.sector_bucket,
             f"${(c.market_cap or 0)/1e6:.0f}M" if c.market_cap else "?",
-            c.exchange or "?", note,
+            c.exchange or "?", "; ".join(notes),
         )
     console.print(table)
     if unresolved:
         console.print(f"[yellow]Unresolved: {', '.join(unresolved)}[/yellow]")
+    if dq_reasons:  # empty whenever --force is set, since reason is skipped above
+        console.print(
+            f"[red]Pre-screen disqualified ({len(dq_reasons)}): "
+            + ", ".join(f"{t} ({r})" for t, r in dq_reasons.items()) + "[/red]"
+        )
 
     if dry_run:
         console.print("[dim]dry run — nothing written[/dim]")
@@ -200,8 +216,20 @@ def ingest(
     known = db.existing_ciks()
     fresh = [c for c in resolved if c.cik not in known]
     skipped = len(resolved) - len(fresh)
+    n_dq = 0
+    for c in fresh:
+        if c.ticker in dq_reasons:
+            c.status = Status.disqualified
+            c.dq_reason = dq_reasons[c.ticker]
+            c.tier = "T4"
+            n_dq += 1
     n = db.upsert_companies(fresh)
-    console.print(f"Ingested {n} new companies" + (f" ({skipped} already in pipeline, untouched)" if skipped else ""))
+    msg = f"Ingested {n} companies"
+    if n_dq:
+        msg += f" ({n_dq} pre-screen disqualified — never enriched, {n - n_dq} active)"
+    if skipped:
+        msg += f" ({skipped} already in pipeline, untouched)"
+    console.print(msg)
 
 
 @app.command()

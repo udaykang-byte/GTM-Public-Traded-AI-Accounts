@@ -29,6 +29,12 @@ create index if not exists companies_sector_idx on companies (sector_bucket);
 -- migration: sector_bucket becomes free-form text (profile packs bring their
 -- own sector vocabulary) — widening only, existing rows unaffected.
 alter table companies drop constraint if exists companies_sector_bucket_check;
+-- v3: L1 pre-screen + tiering — dq_reason carries why a prescreen-failed row
+-- was written as 'disqualified'; tier (T1-T4) is computed at score commit
+-- (or 'T4' at prescreen time) and mirrored here so ordering queries don't
+-- need to join scores. NULL tier (pre-v3 rows) is treated as T3 in app code.
+alter table companies add column if not exists dq_reason text not null default '';
+alter table companies add column if not exists tier text;
 
 create table if not exists signals (
   id             bigint generated always as identity primary key,

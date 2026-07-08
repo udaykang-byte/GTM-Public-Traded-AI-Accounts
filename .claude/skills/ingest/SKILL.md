@@ -25,3 +25,5 @@ After running:
 - Suggest `/enrich` as the next step.
 
 Add `--dry-run` to preview without writing to Supabase.
+
+**L1 pre-screen (v3)**: before writing, each resolved company is checked against config `prescreen:` (customer/competitor `exclude_tickers`, `exclude_sic`, exchange/OTC allowlist, shell-name patterns, cap band). Companies that fail are still written — as status `disqualified` with `dq_reason` set and `tier` `T4` — so they never re-enter the funnel and never draw EDGAR/Parallel spend. The resolved-companies table shows the DQ reason inline; pass `--force` to bypass the prescreen entirely (e.g. a known-good ticker that trips a shell-name heuristic).

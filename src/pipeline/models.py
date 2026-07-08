@@ -41,6 +41,11 @@ class Company(BaseModel):
     ipo_date: date | None = None
     status: Status = Status.new
     profile: Profile | None = None
+    # v3: L1 pre-screen + tiering — dq_reason is set when the prescreen fails
+    # a company at ingest time; tier is null until the company is scored
+    # (T1-T4, computed at commit — see scoring.tier_of)
+    dq_reason: str = ""
+    tier: str | None = None
 
     @field_validator("sector_bucket", mode="before")
     @classmethod

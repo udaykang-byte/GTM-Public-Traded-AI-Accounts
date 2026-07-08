@@ -28,6 +28,19 @@ universe:
       sic: ["8200", "8221", "8249", "8299"]
       keywords: [education, learning, edtech, training, tutoring, courseware]
 
+# L1 pre-screen (v3): cheap exclusions applied before EDGAR/Parallel spend, run
+# by both `ingest` (single companies) and `discover` (bulk, inside
+# universe.screen). Defaults are inert for discover (exchange/cap band already
+# match the universe.* filters); for ingest, otc_only_exclude is the one
+# default with teeth since ingest otherwise has no exchange filter at all.
+prescreen:
+  exclude_tickers: []       # customers/competitors — never re-enter regardless of the screen
+  exclude_sic: []            # SIC codes to hard-exclude even if a sector otherwise matches
+  exchange_allowlist: []     # empty -> falls back to universe.exchanges
+  otc_only_exclude: true     # exclude tickers with no/blank/OTC-flagged exchange
+  shell_name_patterns: []    # e.g. [acquisition corp, blank check, spac]
+  # cap band reuses universe.market_cap_min/market_cap_max unless overridden here
+
 enrich:
   edgar:
     years_back: 2            # compare latest vs prior annual report for AI-mention delta

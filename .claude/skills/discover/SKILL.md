@@ -25,3 +25,5 @@ Important:
 - Band/sectors are config knobs in `config/settings.yaml` — if the user wants a wider band or different sectors, edit config, don't hack code.
 
 After running: report universe → sector → band counts, list a sample of seeded companies (ticker, name, sector, cap), suggest `/enrich`.
+
+**L1 pre-screen (v3)**: after the market-cap band stage, each remaining candidate is also checked against config `prescreen:` (customer/competitor exclusions, excluded SIC, shell-name patterns — exchange/OTC and cap band are already covered by the earlier stages, so this mostly matters for `exclude_tickers`/`exclude_sic`/`shell_name_patterns`). Filtered candidates are dropped, not written — the funnel table's `prescreen_dq` row shows the count.

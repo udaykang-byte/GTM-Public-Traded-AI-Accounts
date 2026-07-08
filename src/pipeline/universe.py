@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 
 import httpx
 
+from pipeline import prescreen
 from pipeline.config import CACHE_DIR, SETTINGS, edgar_identity, env
 from pipeline.models import Company
 
@@ -318,6 +319,7 @@ def screen(
         "sector_matched": 0,
         "cap_checked": 0,
         "cap_throttled_at": None,
+        "prescreen_dq": 0,
         "in_band": 0,
     }
 
@@ -363,20 +365,26 @@ def screen(
         if cap is None or not (cap_min <= cap <= cap_max):
             continue
         sector = classify_sector(slim["sic"], row.get("name", ""), slim["sic_description"])
-        results.append(
-            Company(
-                cik=int(row["cik"]),
-                ticker=str(row["ticker"]).upper(),
-                name=row.get("name") or slim["name"],
-                exchange=row.get("exchange"),
-                sic=slim["sic"] or None,
-                sic_description=slim["sic_description"] or None,
-                sector_bucket=sector,
-                market_cap=cap,
-                website=slim["website"],
-                hq_state=slim["state"],
-            )
+        company = Company(
+            cik=int(row["cik"]),
+            ticker=str(row["ticker"]).upper(),
+            name=row.get("name") or slim["name"],
+            exchange=row.get("exchange"),
+            sic=slim["sic"] or None,
+            sic_description=slim["sic_description"] or None,
+            sector_bucket=sector,
+            market_cap=cap,
+            website=slim["website"],
+            hq_state=slim["state"],
         )
+        # L1 pre-screen: exclude_tickers/exclude_sic/shell-name heuristics on
+        # top of the exchange + cap-band checks already applied above —
+        # filtered candidates are dropped (never seeded), saving EDGAR/Parallel
+        # spend before it happens
+        if prescreen.check(company.model_dump(), SETTINGS):
+            stats["prescreen_dq"] += 1
+            continue
+        results.append(company)
         if limit and len(results) >= limit:
             break
     stats["in_band"] = len(results)
