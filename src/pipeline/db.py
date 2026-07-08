@@ -206,6 +206,37 @@ def get_contacts(cik: int) -> list[dict]:
     return client().table("contacts").select("*").eq("company_cik", cik).execute().data or []
 
 
+# ---------- messages ----------
+
+def upsert_message(row: dict) -> None:
+    """Idempotent per (contact, angle): regenerating on the same angle replaces
+    the draft; a new angle produces a new sequence for the same contact."""
+    client().table("messages").upsert(row, on_conflict="contact_id,angle_fingerprint").execute()
+
+
+def get_messages(cik: int) -> list[dict]:
+    return (
+        client().table("messages").select("*").eq("company_cik", cik)
+        .order("created_at", desc=True).execute().data or []
+    )
+
+
+def all_messages() -> dict[int, list[dict]]:
+    """Every message, grouped by company_cik — mirrors all_angles()."""
+    grouped: dict[int, list[dict]] = {}
+    page, offset = 1000, 0
+    while True:
+        rows = (
+            client().table("messages").select("*")
+            .order("id").range(offset, offset + page - 1).execute().data
+        ) or []
+        for r in rows:
+            grouped.setdefault(int(r["company_cik"]), []).append(r)
+        if len(rows) < page:
+            return grouped
+        offset += page
+
+
 # ---------- runs ----------
 
 def start_run(stage: str) -> int | None:

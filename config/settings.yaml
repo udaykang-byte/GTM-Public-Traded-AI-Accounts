@@ -92,3 +92,17 @@ people:
     ai_marketing: [CMO, VP Marketing, Head of Digital]
     custom_ai_agents: [CTO, CIO, COO, VP Engineering]
     ai_consultation: [CEO, CFO, COO]
+
+messages:
+  max_per_run: 40              # contact-level packet cap per prepare
+  packets_per_subagent: 3      # /outreach batch size (prose needs smaller batches than scoring)
+  day_offsets: [0, 3, 8, 16]   # stamped by commit(); whatever the LLM wrote is ignored
+  # case_study / benchmark stay off until martechs.io has citable proof points
+  allowed_archetypes: [observation, creative_ideas, referral_ceiling, problem_solution, whole_offer]
+  word_count:
+    step1_min: 60
+    step1_max: 120
+    hard_max: 150              # any body above this fails QA outright
+  you_we_ratio_min: 2.0        # prospect-focused vs self-focused language (warning)
+  banned_words_extra: []       # appended to BANNED_WORDS in messages.py
+  framework_file: outbound_copywriter.md   # relative to config/; embedded in _shared.json

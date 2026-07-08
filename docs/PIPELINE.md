@@ -9,6 +9,12 @@
    — or paste `sql/schema.sql` into the Supabase SQL editor once.
 4. Parallel auth: `parallel-cli login` (device OAuth) or set `PARALLEL_API_KEY`.
 
+### Upgrading to outreach-messages
+
+Existing installs must re-run `uv run python -m pipeline apply-schema` after
+pulling the outreach-messages feature — it adds the `messages` table, and
+`messages --commit` fails without it.
+
 ### Upgrading to outreach-angles
 
 Existing installs must re-run `uv run python -m pipeline apply-schema` after
@@ -43,8 +49,13 @@ uv run python -m pipeline score --prepare --statuses scored  # rescore with angl
 # 4. Contacts for qualified accounts
 uv run python -m pipeline people --limit 5
 
-# 5. Hand-off
-uv run python -m pipeline export                 # data/exports/qualified.csv
+# 5. Outreach drafts (v2: Haiku subagents via Claude Code — see /outreach skill)
+uv run python -m pipeline messages --prepare     # one packet per contact
+#   -> /outreach skill spawns Haiku subagents -> results land in data/message_results/
+uv run python -m pipeline messages --commit      # QA gate -> messages table (drafts)
+
+# 6. Hand-off
+uv run python -m pipeline export --messages      # qualified.csv + messages.csv
 ```
 
 `status` shows the funnel any time. Single-company deep dive:
@@ -68,6 +79,11 @@ uv run python -m pipeline export                 # data/exports/qualified.csv
 - Deep tier: 1 Parallel task per company, capped at enrich.deep.max_tasks_per_run (15).
 - LLM scoring: zero API cost in v1 (Claude Code Haiku subagents). v2 flips to
   OpenRouter: `score --provider openrouter` once `OPENROUTER_API_KEY` is set.
+- Message drafting: zero API cost (same Haiku-subagent mechanism, /outreach skill);
+  capped at `messages.max_per_run` contact packets per prepare. Copy rules live in
+  `config/outbound_copywriter.md`; deterministic QA (banned words, subject shape,
+  packet-facts-only checks) runs at `messages --commit`. Companies without a fresh
+  angle are skipped — never message on a stale hook.
 
 ## Troubleshooting
 

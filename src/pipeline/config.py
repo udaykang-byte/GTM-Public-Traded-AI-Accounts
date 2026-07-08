@@ -16,8 +16,14 @@ QUEUE_DIR = DATA_DIR / "scoring_queue"
 RESULTS_DIR = DATA_DIR / "scoring_results"
 ARCHIVE_DIR = DATA_DIR / "scoring_archive"
 EXPORT_DIR = DATA_DIR / "exports"
+# message generation gets its own dirs so /score and /outreach can be in
+# flight at the same time without one commit eating the other's results
+MSG_QUEUE_DIR = DATA_DIR / "message_queue"
+MSG_RESULTS_DIR = DATA_DIR / "message_results"
+MSG_ARCHIVE_DIR = DATA_DIR / "message_archive"
 
-for _d in (DATA_DIR, CACHE_DIR, QUEUE_DIR, RESULTS_DIR, ARCHIVE_DIR, EXPORT_DIR):
+for _d in (DATA_DIR, CACHE_DIR, QUEUE_DIR, RESULTS_DIR, ARCHIVE_DIR, EXPORT_DIR,
+           MSG_QUEUE_DIR, MSG_RESULTS_DIR, MSG_ARCHIVE_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 
