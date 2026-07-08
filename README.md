@@ -4,7 +4,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-brightgreen)
 
-AIPT finds US-listed micro-cap companies (Fintech, Edtech, Healthcare, SaaS) that show
+This orchestrator finds US-listed micro-cap companies (Fintech, Edtech, Healthcare, SaaS) that show
 public evidence they need AI services, scores that evidence with cited reasoning, and
 surfaces decision-maker contacts — turning SEC filings and web research into a ranked,
 exportable account list.
