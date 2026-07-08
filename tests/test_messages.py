@@ -87,13 +87,15 @@ def dirs(tmp_path, monkeypatch):
 
 # copy that passes every deterministic QA gate (counted by hand)
 BODY1 = (
-    "Saw the follow-on Test Co priced in March — that kind of raise usually "
-    "comes with a mandate to show progress fast.\n\n"
-    "Most micro-cap software teams at your stage still run outbound by hand. "
-    "Your board heard the plan. Your team feels the gap between the "
-    "announcement and what ships.\n\n"
-    "The window the raise opened narrows every month it sits unstaffed.\n\n"
-    "Are you seeing this too?"
+    "Congrats on the follow-on raise.\n\n"
+    "The uncomfortable part starts now: your board wants it turned into "
+    "growth, and hiring reps eats half of it before your first new meeting "
+    "gets booked.\n\n"
+    "Most software micro-caps in this spot put the money into headcount, "
+    "then wait out six months of ramp.\n\n"
+    "We build AI-run outbound instead — targeting, personalization, replies — "
+    "so your raise shows up as pipeline, not payroll.\n\n"
+    "Worth a look at how that maps to Test Co?"
 )
 BODY2 = (
     "Put together a two-page gap map of where an outbound system would slot in "
@@ -197,6 +199,9 @@ def test_clean_sequence_passes_qa(packet):
     (seq_with_step(2, body=BODY2.replace("Uday", "{{firstName}}")), "merge variables"),
     (seq_with_step(2, body=BODY2.replace("Uday", "[Your name]")), "merge variables"),
     (seq_with_step(3, body=BODY3.replace("staffed", "streamlined")), "banned word 'streamline'"),
+    (seq_with_step(2, body=BODY2.replace("your own filings", "your 8-K")), "cites a filing form"),
+    (seq_with_step(2, body=BODY2.replace("a template", "the May 6th one")), "cites a calendar date"),
+    (seq_with_step(2, body=BODY2.replace("a template", "the 2026-03-16 one")), "cites a calendar date"),
 ])
 def test_hard_qa_failures(packet, seq_dict, needle):
     hard, _ = _qa(seq_dict, packet)
@@ -223,6 +228,16 @@ def test_step_four_cta_and_word_count_warnings(packet):
     assert any("breakup_options" in w for w in warn)
     _, warn = _qa(seq_with_step(1, body="Too short but has a question? " + " ".join(["pad"] * 10)), packet)
     assert any("step 1 body has" in w for w in warn)
+
+
+def test_analyst_voice_and_em_dash_warnings(packet):
+    hard, warn = _qa(seq_with_step(
+        3, body=BODY3.replace("One thing", "That kind of hire usually means one thing")), packet)
+    assert hard == []
+    assert any("analyst voice" in w for w in warn)
+    hard, warn = _qa(seq_with_step(3, body=BODY3 + "\n\nOne — two — three — dashes."), packet)
+    assert hard == []
+    assert any("em-dashes" in w for w in warn)
 
 
 # ---------- prepare ----------

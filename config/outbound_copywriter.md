@@ -34,9 +34,12 @@ filings and public footprint. Two profiles (the packet's `verdict.profile`):
 
 **3. Strongest proof point.**
 NONE CITABLE YET. This is a hard constraint, not a gap to paper over. Never cite
-metrics, client names, or case studies. Substitute: the prospect's own dated
-events (angles), peer-story framing without named clients, the specificity of our
-research itself, and risk-reversal offers ("no pitch attached").
+metrics, client names, or case studies. Our social proof is **pattern fluency**
+(added 2026-07-07 after batch-1 review): show we've seen companies in their exact
+spot enough times to know where it breaks and what fixes it — "[companies in
+their situation] + [the specific way it goes wrong] + [what the fix looks like]".
+Every step-1 and step-2 email carries one pattern-proof line. Plus risk-reversal
+offers ("no pitch attached").
 
 **4. Problem the buyer handles manually or poorly.**
 They announce AI ambitions, raise capital, or install new executives — with no
@@ -94,10 +97,41 @@ rate, not volume.
 
 ## Packet Facts Only (hard rule)
 
-Every claim, number, date, name, and quote in the copy must come from the
-packet (angles, evidence quotes, why_now, company fields) or from this file's
-service descriptions. If it isn't in the packet, it doesn't go in the email.
-No invented peers, metrics, client results, or events. When in doubt, leave it out.
+Every claim you RELY on must come from the packet (angles, evidence quotes,
+why_now, company fields) or from this file's service descriptions. If it isn't
+in the packet, it doesn't go in the email. No invented peers, metrics, client
+results, or events. When in doubt, leave it out.
+
+But packet facts are for DIAGNOSIS, not for quoting. See the next section.
+
+## Signal → Pain → Fix (the translation layer — batch-1 lesson, 2026-07-07)
+
+The #1 failure mode: quoting the signal back at the prospect. "Saw your Health
+AI initiative announced May 6th" reads as surveillance, not homework — and an
+email that only observes gives the reader nothing to buy. The signal is
+evidence for US; the email is about the PAIN the signal implies and what we do
+about it.
+
+| What the packet shows | The pain it implies (write about THIS) | The fix (say what we do) |
+|---|---|---|
+| Funding raise / new capital | The board expects the raise to turn into growth; hiring reps eats it as ramp time and payroll before pipeline moves | We build AI-run growth systems so the raise shows up as pipeline, not headcount |
+| New C-level exec | Inherited manual operations plus pressure for early wins — and no time to build a team first | We hand them their first shipped win: assessment to working system in weeks, while they hire |
+| AI announcement / initiative (adopter) | The promise is public but execution is unstaffed; the gap between announcement and product widens every quarter | We turn announced ambitions into shipped workflows — roadmap, vendor calls, build |
+| AI talk with no execution (laggard) | Investors ask about AI on every call and nobody inside owns the answer | We act as the outside owner: readiness assessment, pick the two things worth doing first, build them |
+| SDR/BDR/marketing hiring | Every hire is months of ramp and fixed cost; cost per meeting keeps climbing | AI-run outbound books qualified meetings without adding ramp time or headcount |
+| S&M spend rising, growth slowing | More budget into the same manual motion won't bend the curve | AI lead gen and outreach raise the output of the existing team instead of expanding it |
+
+Rules:
+- The trigger event buys ONE humanized clause of relevance — "congrats on the
+  raise", "you've been public about going big on AI", "new quarter, new
+  mandate". **Never** filing form names (8-K, 10-K, 424B5…), never calendar
+  dates ("May 6th", "2026-03-16"), never "announced on"/"filed" language, never
+  quotes lifted from filings. If the first line could double as a compliance
+  alert, rewrite it.
+- The pain gets the most words. The reader should recognize their week, not
+  their filing history.
+- Every email states plainly what we do and what changes for them (the Fix
+  column). An email that is only observations plus a question does not ship.
 
 ---
 
@@ -123,13 +157,18 @@ Write several, pick the one closest to the angle.
 
 ### P — Personalized opening
 Prove homework in one or two lines. Must fail the "could I send this to 1,000
-people?" test. Our openers come from the packet's primary angle: the filing,
-the raise, the hire, the announcement — with its date.
+people?" test. The homework shows through the PAIN you name (specific to their
+situation per the translation table) — the trigger event itself gets one light,
+humanized clause at most.
 
-Good: "Saw the $12M follow-on priced in March — that kind of dry powder usually
-comes with a mandate to show progress fast."
-Good: "Noticed LifeMD announced a broad-AI push on May 6 and installed a new
-CMO the same quarter. That combination usually means a first-100-days agenda."
+Good: "Congrats on the raise. The uncomfortable part starts now — the board
+wants it turned into growth, and hiring your way there eats half of it."
+Good: "You've been public about going big on AI. From the outside it looks
+like the plan is ahead of the org chart — nobody inside owns it yet."
+Bad: "Saw your Health AI initiative announced May 6th with the exec language
+around 'broad AI adoption'." (Filing surveillance. Instant delete.)
+Bad: "That kind of announcement usually comes with a first-100-days execution
+window." (Analyst robot voice — nobody talks like this.)
 Bad: "I came across your company and was impressed by your growth."
 Bad: "I hope this email finds you well."
 
@@ -140,11 +179,28 @@ board/investor pressure without an owner; adopters feel execution lag behind
 their announcement. The reader should think "that's exactly my situation."
 
 ### R — Relevant value (adapted: no proof points)
-One concrete mechanism or idea — not features, not a product tour, and never an
-invented result. Three allowed moves:
-- **Specific idea**: one tailored thing we'd do for them, drawn from their signals ("your support volume + no AI in product = an agent on your own help data is the obvious first win").
-- **Peer story, unnamed**: "Most micro-cap health platforms we look at are running outbound fully manual" — pattern language, no fake clients, no fake numbers.
-- **Risk reversal**: a free, no-pitch deliverable — teardown, gap map, first-step roadmap.
+MANDATORY: one plain sentence on what martechs.io does for their situation and
+what changes for them. Not features, not a product tour, never an invented
+result. Use the value-prop line for the packet's `recommended_service`:
+
+- `ai_lead_generation`: "We build the targeting engine — ICP, intent data, list
+  building — so your reps start every week with accounts worth their time."
+- `ai_outreach`: "We build and run AI outbound — personalization, sequencing,
+  reply handling — so qualified meetings land without another SDR hire."
+- `ai_marketing`: "We set up content and campaign engines that let a two-person
+  marketing team publish like a ten-person one."
+- `custom_ai_agents`: "We build agents on your own data — support, ops, internal
+  knowledge — that take real work off the team within weeks."
+- `ai_consultation`: "We act as your outside AI owner: assess what's real, pick
+  the two things worth doing first, and build them with you."
+
+Rephrase to fit the email's flow, keep the substance. Layer on top:
+- **Pattern proof** (our social proof): how companies in their exact spot get
+  stuck and what the fix looks like. Unnamed patterns, no fake numbers.
+- **Specific idea**: one tailored thing we'd do for them, drawn from their
+  signals ("an agent on your own help-center data is the obvious first win").
+- **Risk reversal**: a free, no-pitch deliverable — teardown, gap map,
+  first-step roadmap.
 
 ### K — Kick-off CTA
 One low-friction question, answerable in under 10 seconds. Soft and no-oriented
@@ -163,8 +219,8 @@ Bad: "Let's hop on a quick 15-minute call." · "Are you free Thursday?"
 ## The 7 Power Patterns (layer 2+ per email)
 
 1. **Question opener > statement** — a question creates a gap the brain wants to close.
-2. **Peer story > generic discovery** — "Most [sector] teams at this size…" beats "I found your company on…". Unnamed patterns only — no invented companies.
-3. **"Reason why" framing** — explain why this email exists: "The reason I'm writing: your 8-K reads like there's no internal owner for this yet."
+2. **Pattern proof > generic discovery** — "Most [sector] teams at this size put the raise into reps and wait out six months of ramp" beats "I found your company on…". Unnamed patterns only — no invented companies, and it must include how it goes wrong AND what fixes it.
+3. **"Reason why" framing** — explain why this email exists: "The reason I'm writing: it looks like nobody inside owns this yet."
 4. **Specific numbers > ranges** — but ONLY numbers from the packet: their raise amount, their filing date, days since the event. Our own metrics don't exist yet — never fabricate them.
 5. **Scale credibility** — skip it until we have real scale numbers. Adjective credibility ("leading provider") is banned anyway.
 6. **Gap-hinting CTA** — "Want to see where the gaps are in the current setup?" Curiosity beats interest.
@@ -246,6 +302,11 @@ the deal.
 - Sign-off: first name only — "Uday". No signature block, no title, no company tagline.
 - Channel-neutral phrasing: never "reply to this email" (some contacts get this via LinkedIn).
 - Read it aloud. If it sounds like marketing, rewrite it.
+- **Anti-robot rules** (batch-1 lesson): at most 2 em-dashes per email. Never
+  "that kind of X usually/typically comes with/means/signals" — analyst voice.
+  No consulting jargon: "execution window", "first-100-days agenda", "capability
+  gap", "GTM velocity", "go-to-market motion". No day-precise dates or filing
+  form names anywhere. Say it the way you'd say it across a table.
 
 **Banned words** (deterministic QA gate — any hit fails the draft):
 leverage, utilize, streamline, comprehensive, robust, innovative, cutting-edge,
@@ -271,8 +332,11 @@ more than one CTA per email.
 - First line specific to this prospect (not sendable to 1,000 people).
 - Exactly one CTA per email, and it's a question. No meeting ask in steps 1–3.
 - Every sentence its own paragraph. 3:1 you:we language ratio.
-- At least 2 power patterns applied.
+- No filing form names or calendar dates anywhere in the copy (hard fail).
+- Value prop present: the email says what we do and what changes for them.
+- Pattern proof present in steps 1–2.
+- At most 2 em-dashes per email; no analyst-voice constructions.
 - No banned words. No links in step 1. No `{{merge_variables}}` or
   `[bracketed placeholders]` — fully rendered text with the real first name and
   real company name.
-- Every number/date/name traceable to the packet.
+- Every fact relied on traceable to the packet — but expressed as pain, not citation.

@@ -49,16 +49,41 @@ MEETING_ASK_RE = re.compile(
 LINK_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 PLACEHOLDER_RE = re.compile(r"\{\{|\}\}|\[[^\]]{1,30}\]")
 SUBJECT_CHARS_RE = re.compile(r"[^a-z0-9 '&+?$.-]")
+# batch-1 lesson (2026-07-07): quoting signals back at the prospect reads as
+# surveillance — filing forms and day-precise dates are hard failures; the
+# analyst-voice constructions that came with them are warnings
+FILING_FORM_RE = re.compile(r"\b(8-K|10-K|10-Q|424B5|DEF 14A|S-1|13D|13G)\b", re.IGNORECASE)
+DATE_CITE_RE = re.compile(
+    r"\b20\d{2}-\d{2}-\d{2}\b"
+    r"|\b(january|february|march|april|may|june|july|august|september|october"
+    r"|november|december)\.? \d{1,2}(st|nd|rd|th)?\b", re.IGNORECASE)
+ANALYST_VOICE_RE = re.compile(
+    r"\bthat kind of\b|\b(usually|typically|often) (comes with|means|signals)\b"
+    r"|\bexecution window\b|\bfirst.100.days\b|\bcapability gap\b|\bgtm velocity\b",
+    re.IGNORECASE)
+FILING_SPEAK_RE = re.compile(r"\b(earnings call|press release|proxy statement|filed|filing)\b", re.IGNORECASE)
 
 HARD_RULES = [
     "NEVER invent metrics, client names, or case studies — martechs.io has no "
     "citable proof points yet; archetypes case_study and benchmark are FORBIDDEN.",
-    "Every number, date, name, and quote in the copy must appear in the packet "
-    "(angles, evidence quotes, why_now, company fields) — prefer the prospect's "
-    "own dated numbers.",
-    "Lead step 1 with the packet's primary_angle_fingerprint angle; steps 2 and 3 "
-    "must each bring something NEW (a different packet angle or the service's "
-    "pitch angle) — never 'just bumping'.",
+    "TRANSLATE, DON'T CITE: packet signals are diagnosis, not copy. Follow the "
+    "Signal -> Pain -> Fix table in copywriter_framework. The trigger event gets "
+    "ONE humanized clause ('congrats on the raise'); NEVER filing form names "
+    "(8-K, 10-K, 424B5...), NEVER calendar dates ('May 6th', '2026-03-16'), "
+    "never 'announced on'/'filed' language, never quotes lifted from filings — "
+    "these are automatic QA failures.",
+    "VALUE PROP REQUIRED: every email states plainly what martechs.io does for "
+    "their situation and what changes for them (use the per-service value-prop "
+    "lines in copywriter_framework). An email that is only observations plus a "
+    "question does not ship.",
+    "PATTERN PROOF in steps 1-2: how companies in their exact spot get stuck "
+    "and what fixes it — unnamed patterns, no invented clients or numbers. This "
+    "is our social proof.",
+    "Facts you rely on must come from the packet — but expressed as the pain "
+    "they imply, not as citations. Lead step 1 with the pain implied by the "
+    "packet's primary_angle_fingerprint angle; steps 2 and 3 must each bring "
+    "something NEW (a different angle's pain or the service pitch) — never "
+    "'just bumping'.",
     "Fully rendered plain text: real first name, real company name; no "
     "{{merge_variables}}, no [bracketed placeholders], no signature block — "
     "sign off with just 'Uday'.",
@@ -69,6 +94,10 @@ HARD_RULES = [
     "Step 1 body 60-120 words; steps 2-4 shorter is fine; hard max 150 anywhere; "
     "every sentence its own paragraph; exactly one CTA per step and it is a "
     "question; no banned words.",
+    "WRITE LIKE A HUMAN: contractions, plain words, at most 2 em-dashes per "
+    "email; never 'that kind of X usually means/comes with' analyst voice; no "
+    "consulting jargon (execution window, first-100-days, capability gap, GTM "
+    "velocity). Say it the way you'd say it across a table.",
 ]
 
 
@@ -319,11 +348,25 @@ def qa_check(seq: MessageSequence, packet: dict) -> tuple[list[str], list[str]]:
         text = f"{s.subject or ''} {s.body}"
         if PLACEHOLDER_RE.search(text):
             hard.append(f"step {s.step} has merge variables or [placeholders] — must be fully rendered")
+        m = FILING_FORM_RE.search(text)
+        if m:
+            hard.append(f"step {s.step} cites a filing form ('{m.group(0)}') — translate the signal into a pain, don't quote it")
+        m = DATE_CITE_RE.search(text)
+        if m:
+            hard.append(f"step {s.step} cites a calendar date ('{m.group(0)}') — reads as filing surveillance")
         for word, pat in _BANNED_PATTERNS:
             if pat.search(text):
                 hard.append(f"banned word '{word}' in step {s.step}")
         if s.step <= 3 and MEETING_ASK_RE.search(s.body):
             warn.append(f"step {s.step} sounds like a meeting ask (none before step 4)")
+        m = ANALYST_VOICE_RE.search(s.body)
+        if m:
+            warn.append(f"step {s.step} analyst voice ('{m.group(0)}') — say it like a human")
+        m = FILING_SPEAK_RE.search(s.body)
+        if m:
+            warn.append(f"step {s.step} filing-speak ('{m.group(0)}')")
+        if s.step <= 3 and s.body.count("—") > 2:
+            warn.append(f"step {s.step} has {s.body.count('—')} em-dashes (want <=2)")
 
     for extra in cfg.get("banned_words_extra", []) or []:
         pat = _banned_pattern(extra)
