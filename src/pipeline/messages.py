@@ -62,7 +62,19 @@ SUBJECT_CHARS_RE = re.compile(r"[^a-z0-9 '&+?$.-]")
 # batch-1 lesson (2026-07-07): quoting signals back at the prospect reads as
 # surveillance — filing forms and day-precise dates are hard failures; the
 # analyst-voice constructions that came with them are warnings
-FILING_FORM_RE = re.compile(r"\b(8-K|10-K|10-Q|424B5|DEF 14A|S-1|13D|13G)\b", re.IGNORECASE)
+FILING_FORM_RE = re.compile(r"\b(8-K|10-K|10-Q|424B\d?|DEF 14A|S-1|S-3|S-4|13D|13G)\b", re.IGNORECASE)
+# batch-2 lesson (2026-07-10): instrument names are filing language too — a
+# "shelf registration"/"PIPE placement" opener reads as compliance surveillance
+# exactly like a form name (copywriter doc: "the human version of it —
+# 'Congrats on the raise'")
+INSTRUMENT_RE = re.compile(
+    r"\b(shelf registration|shelf offering|private placement|PIPE placement"
+    r"|registered direct|at-the-market offering)\b|\bPIPE\b", re.IGNORECASE)
+# month-name event citations ("from November") aren't day-precise, so warning
+# tier — but they pull copy back toward filing-surveillance voice
+MONTH_CITE_RE = re.compile(
+    r"\b(in|from|last|since|back in) (january|february|march|april|may|june"
+    r"|july|august|september|october|november|december)\b", re.IGNORECASE)
 DATE_CITE_RE = re.compile(
     r"\b20\d{2}-\d{2}-\d{2}\b"
     r"|\b(january|february|march|april|may|june|july|august|september|october"
@@ -466,6 +478,12 @@ def qa_check(seq: MessageSequence, packet: dict) -> tuple[list[str], list[str]]:
         m = FILING_FORM_RE.search(text)
         if m:
             hard.append(f"step {s.step} cites a filing form ('{m.group(0)}') — translate the signal into a pain, don't quote it")
+        m = INSTRUMENT_RE.search(text)
+        if m:
+            hard.append(f"step {s.step} uses filing instrument language ('{m.group(0)}') — say the human version ('the raise', 'the new capital')")
+        m = MONTH_CITE_RE.search(text)
+        if m:
+            warn.append(f"step {s.step} cites an event month ('{m.group(0)}') — drop the timestamp, keep the moment")
         m = DATE_CITE_RE.search(text)
         if m:
             hard.append(f"step {s.step} cites a calendar date ('{m.group(0)}') — reads as filing surveillance")
@@ -491,6 +509,9 @@ def qa_check(seq: MessageSequence, packet: dict) -> tuple[list[str], list[str]]:
 
     if seq.steps[3].cta_type.value != "breakup_options":
         warn.append("step 4 cta_type should be breakup_options")
+
+    if not re.search(r"\bUday\s*$", seq.steps[3].body.strip()):
+        hard.append("step 4 must end with the 'Uday' sign-off")
 
     # unverified numbers: warning-tier heuristic — a hard gate would false-
     # positive on benign counts ("2-3 hours"); this reliably surfaces invented

@@ -202,6 +202,11 @@ def test_clean_sequence_passes_qa(packet):
     (seq_with_step(2, body=BODY2.replace("your own filings", "your 8-K")), "cites a filing form"),
     (seq_with_step(2, body=BODY2.replace("a template", "the May 6th one")), "cites a calendar date"),
     (seq_with_step(2, body=BODY2.replace("a template", "the 2026-03-16 one")), "cites a calendar date"),
+    (seq_with_step(2, body=BODY2.replace("your own filings", "your S-3")), "cites a filing form"),
+    (seq_with_step(1, body=BODY1 + " Your shelf registration opens the door?"), "instrument language"),
+    (seq_with_step(1, body=BODY1 + " Congrats on the PIPE?"), "instrument language"),
+    (seq_with_step(2, body=BODY2.replace("a template", "a private placement recap")), "instrument language"),
+    (seq_with_step(4, body=BODY4.replace("Uday", "Best")), "'Uday' sign-off"),
 ])
 def test_hard_qa_failures(packet, seq_dict, needle):
     hard, _ = _qa(seq_dict, packet)
@@ -215,6 +220,14 @@ def test_unverified_number_warns_but_packet_number_does_not(packet):
     assert any("unverified number '97%'" in w for w in warn)
     _, warn2 = _qa(seq_with_step(3, body=BODY3 + "\n\nYour 42 filing shows it."), packet)
     assert not any("unverified" in w for w in warn2)
+
+
+def test_month_cite_warns_but_bare_month_does_not(packet):
+    hard, warn = _qa(seq_with_step(2, body=BODY2.replace("a template", "the one from November")), packet)
+    assert hard == []
+    assert any("event month" in w for w in warn)
+    hard, warn2 = _qa(seq_with_step(2, body=BODY2.replace("a template", "a November planning template")), packet)
+    assert not any("event month" in w for w in warn2)
 
 
 def test_meeting_ask_before_step_four_warns(packet):

@@ -127,10 +127,12 @@ about it.
 Rules:
 - The trigger event buys ONE humanized clause of relevance — "congrats on the
   raise", "you've been public about going big on AI", "new quarter, new
-  mandate". **Never** filing form names (8-K, 10-K, 424B5…), never calendar
-  dates ("May 6th", "2026-03-16"), never "announced on"/"filed" language, never
-  quotes lifted from filings. If the first line could double as a compliance
-  alert, rewrite it.
+  mandate". **Never** filing form names (8-K, 10-K, S-3, 424B5…), never
+  instrument names ("shelf registration", "PIPE", "private placement" — say
+  "the raise" / "the new capital"), never calendar dates ("May 6th",
+  "2026-03-16") or event months ("from November"), never "announced
+  on"/"filed" language, never quotes lifted from filings. If the first line
+  could double as a compliance alert, rewrite it.
 - The pain gets the most words. The reader should recognize their week, not
   their filing history.
 - Every email states plainly what we do and what changes for them (the Fix

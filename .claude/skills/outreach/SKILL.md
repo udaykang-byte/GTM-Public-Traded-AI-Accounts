@@ -26,28 +26,23 @@ persona's pains/language as raw material, never to invent pains beyond it; a nul
 persona just means write from the packet's angles and verdict alone. Packets from
 before this existed simply have no `persona` key — `messages --commit` handles both.
 
-## Step 2 — spawn Haiku subagents to write copy
+## Step 2 — spawn lean copywriter subagents
 
-List queued packets (`data/message_queue/*.json`, ignore `_shared.json`), then spawn
-**Agent tool subagents with `model: haiku`**, giving each **up to 3 packet paths**
-(prose needs smaller batches than scoring's 5). Spawn batches in parallel (single
-message, multiple Agent calls). Each subagent prompt must say:
+List queued packets (`data/message_queue/*.json`, ignore `_shared.json`), then
+spawn **Agent tool subagents with `subagent_type: copywriter`** (the lean agent
+in `.claude/agents/copywriter.md` — Bash+Write only, haiku, no repo baggage,
+carries the full copy contract in its own system prompt), giving each subagent
+a batch of **up to 3 packet paths** (prose needs smaller batches than scoring's
+5). Spawn batches in parallel (single message, multiple Agent calls). The task
+prompt is just:
 
-> You are a senior outbound copywriter for a premium AI-services firm that has NO
-> citable customer proof points. First read `data/message_queue/_shared.json` ONCE —
-> it holds the copywriter framework, services catalog, output schema, and hard rules
-> shared by every packet. Then for EACH packet file listed below: (1) Read the JSON
-> packet. (2) Write a 4-step sequence for that ONE contact, framed for their role,
-> using ONLY facts in the packet — never invent metrics, client names, or events.
-> (3) Write it as JSON matching `output_schema` EXACTLY to the packet's
-> `output_path` (subject on step 1 only, all lowercase 3-5 words; bodies 60-120
-> words, fully rendered with real names, no merge variables, sign off "Uday").
-> Process every packet. Reply only one line per packet: `TICKER contact archetype`.
->
-> Packets: <absolute paths>
+> Write sequences for these packets. Packets:
+> <absolute paths, one per line>
 
 Rules:
-- `model: haiku` always — never write copy in the main conversation.
+- `subagent_type: copywriter` always — it pins haiku and the read-once/
+  write-once contract. Never use opus/sonnet or a general-purpose agent for
+  bulk copywriting, and never write copy in the main conversation.
 - If a subagent fails on a packet, re-spawn just that packet.
 
 ## Step 3 — commit + QA re-spawn loop
@@ -62,7 +57,7 @@ must match the packet) and upserts passing sequences to the `messages` table as
 drafts. **Failed results stay in `data/message_results/`** with their packet still
 queued.
 
-If `failed QA` items are reported: re-spawn ONE Haiku subagent per failure, appending
+If `failed QA` items are reported: re-spawn ONE `copywriter` subagent per failure, appending
 the QA error text to the prompt ("Your previous draft failed QA: <errors>. Read the
 packet and _shared.json again, rewrite the FULL sequence fixing these, overwrite
 <output_path>."), then run `messages --commit` again. **Max 2 retry rounds** — report
