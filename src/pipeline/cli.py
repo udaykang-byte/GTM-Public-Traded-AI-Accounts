@@ -98,7 +98,13 @@ def profile(
 
 
 @app.command()
-def status(brief: bool = typer.Option(False, "--brief", help="One-line funnel summary")):
+def status(
+    brief: bool = typer.Option(False, "--brief", help="One-line funnel summary"),
+    analytics: bool = typer.Option(
+        False, "--analytics",
+        help="Also render outcome analytics: funnel/attribution rates, time-in-stage (v3 phase 4)",
+    ),
+):
     """Funnel counts, recent qualifications, recent runs."""
     from pipeline import db
 
@@ -171,6 +177,11 @@ def status(brief: bool = typer.Option(False, "--brief", help="One-line funnel su
         covered = sum(1 for c in cf if int(c["cik"]) in msgs)
         n_seq = sum(len(v) for v in msgs.values())
         console.print(f"sequences drafted: {n_seq} ({covered} of {len(cf)} contacts_found companies covered)")
+
+    if analytics:
+        from pipeline import analytics as analytics_mod
+
+        analytics_mod.render(console)
 
 
 @app.command()
@@ -824,6 +835,7 @@ def export(
             headline = (angle_by_fp.get(m.get("angle_fingerprint")) or {}).get("headline", "")
             for s in m.get("steps") or []:
                 msg_rows.append({
+                    "message_id": m.get("id"),
                     "ticker": m["ticker"], "company": comp.get("name", ""),
                     "contact": m["contact_name"], "title": m["contact_title"],
                     "email": c.get("email") or "", "linkedin": c.get("linkedin_url") or "",
@@ -847,6 +859,102 @@ def export(
     checklist_path = out.parent / "deliverability_checklist.md"
     checklist_path.write_text(_deliverability_checklist_md(stats))
     console.print(f"Wrote deliverability checklist -> {checklist_path}")
+
+
+def _parse_date_opt(value: str | None) -> str | None:
+    """Validate an optional YYYY-MM-DD string early so a typo surfaces as a
+    clear CLI error, not a Postgres error deep inside outcomes.record()."""
+    if not value:
+        return None
+    from datetime import datetime as _dt
+
+    try:
+        _dt.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise typer.BadParameter(f"--date must be YYYY-MM-DD, got {value!r}")
+    return value
+
+
+def _outcome_csv_batch(path: Path) -> None:
+    """Batch mode for `pipeline outcome --csv`: columns message_id,event,date,note
+    (date/note optional). Every row is attempted; failures are reported per
+    row and the command exits nonzero if any row failed."""
+    from pipeline import outcomes
+
+    with open(path, newline="") as fh:
+        rows = list(csv_mod.DictReader(fh))
+    if not rows:
+        console.print("[yellow]CSV has no rows[/yellow]")
+        return
+
+    ok, failed = 0, 0
+    for i, row in enumerate(rows, start=1):
+        try:
+            message_id = int(row["message_id"])
+            event = (row.get("event") or "").strip()
+            occurred_at = _parse_date_opt((row.get("date") or "").strip() or None)
+            note = row.get("note") or ""
+            result = outcomes.record(message_id, event, occurred_at, note)
+            arrow = f"{result['previous_status']} -> {result['new_status']}"
+            suffix = "" if result["advanced"] else " (no status change)"
+            console.print(f"  row {i}: message {message_id} {event} ({arrow}){suffix}")
+            ok += 1
+        except (KeyError, ValueError, typer.BadParameter) as exc:
+            console.print(f"[red]  row {i}: {exc}[/red]")
+            failed += 1
+
+    console.print(f"Recorded {ok}/{len(rows)} events" + (f", {failed} failed" if failed else ""))
+    if failed:
+        raise typer.Exit(1)
+
+
+@app.command()
+def outcome(
+    message_id: int = typer.Argument(None, help="messages.id to record an outcome event against"),
+    event: str = typer.Option(None, "--event", help="approved|rejected|exported|sent|bounced|replied|positive_reply|meeting|opt_out"),
+    date: str = typer.Option(None, "--date", help="YYYY-MM-DD (default: now)"),
+    note: str = typer.Option("", "--note"),
+    csv: Path = typer.Option(None, "--csv", help="Batch mode: CSV with columns message_id,event,date,note"),
+    ticker: str = typer.Option(None, "--ticker", help="Fuzzy lookup fallback when message_id is omitted (pair with --contact)"),
+    contact: str = typer.Option(None, "--contact", help="Fuzzy lookup fallback when message_id is omitted (pair with --ticker)"),
+):
+    """Record an outcome event against a drafted message. The event is
+    always logged (append-only); messages.status advances only if the event
+    moves it forward on the ladder — see outcomes.py."""
+    from pipeline import db, outcomes
+
+    if csv:
+        _outcome_csv_batch(csv)
+        return
+
+    if message_id is None:
+        if not (ticker and contact):
+            raise typer.BadParameter(
+                "Provide a message_id, or --ticker + --contact for a fuzzy lookup"
+            )
+        matches = db.find_messages(ticker, contact)
+        if not matches:
+            console.print(f"[red]No messages found for {ticker} with contact matching {contact!r}[/red]")
+            raise typer.Exit(1)
+        if len(matches) > 1:
+            console.print(f"[yellow]{len(matches)} matches for {ticker} / {contact!r} — re-run with an exact message_id:[/yellow]")
+            for m in matches:
+                console.print(f"  message_id={m['id']}  {m['ticker']}  {m['contact_name']}  status={m['status']}")
+            raise typer.Exit(1)
+        message_id = matches[0]["id"]
+
+    if not event:
+        raise typer.BadParameter("--event is required (unless using --csv)")
+
+    occurred_at = _parse_date_opt(date)
+    try:
+        result = outcomes.record(message_id, event, occurred_at, note)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    arrow = f"{result['previous_status']} -> {result['new_status']}"
+    suffix = "" if result["advanced"] else " (no status change)"
+    console.print(f"message {result['message_id']}: {result['event']} recorded ({arrow}){suffix}")
 
 
 @app.command()
