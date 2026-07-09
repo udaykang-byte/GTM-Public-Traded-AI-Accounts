@@ -108,6 +108,26 @@ def test_match_persona_title_fallback_matches_either_direction_substring():
     assert persona["role_bucket"] == "VP Marketing"
 
 
+def test_match_persona_prefers_most_specific_title_variant():
+    """"VP Sales Development" must resolve to head_of_sales_development
+    (whose "VP Sales Development" variant matches the whole title), not
+    vp_sales, whose shorter "VP Sales" variant also substring-matches but
+    appears earlier in dict order — specificity-first, not order-first."""
+    persona = people.match_persona("", "VP Sales Development")
+    assert persona is not None
+    assert persona["role_bucket"] == "Head of Sales Development"
+
+
+def test_match_persona_plain_vp_sales_still_resolves_to_vp_sales():
+    """"VP Sales" overlaps equally (8 chars) with vp_sales's exact "VP Sales"
+    variant and with head_of_sales_development's longer "VP Sales
+    Development" variant (title-in-variant direction) — the exact-equality
+    tie-break must pick vp_sales."""
+    persona = people.match_persona("", "VP Sales")
+    assert persona is not None
+    assert persona["role_bucket"] == "VP Sales"
+
+
 def test_match_persona_returns_none_when_nothing_matches():
     assert people.match_persona("", "Regional Facilities Manager") is None
 

@@ -433,10 +433,13 @@ def test_prepare_persona_block_none_when_role_bucket_and_title_unrecognized(dirs
 
 
 def test_recommended_service_consults_personas_before_legacy_roles_by_service(monkeypatch):
-    # sabotage roles_by_service so a fallback-to-legacy read would answer
-    # wrong -- proves personas are consulted FIRST, not merely available
+    # sabotage roles_by_service so a fallback-to-legacy read finds nothing
+    # and would return the LEAD service (ai_consultation). The persona maps
+    # CMO -> ai_outreach, which is NOT the lead -- so ai_outreach can only
+    # come out of the personas-first branch. Deleting or bypassing that
+    # branch makes this fail.
     monkeypatch.setitem(messages.SETTINGS["people"], "roles_by_service", {})
-    fits = [{"service": "ai_outreach", "priority": 1}, {"service": "ai_consultation", "priority": 2}]
+    fits = [{"service": "ai_consultation", "priority": 1}, {"service": "ai_outreach", "priority": 2}]
     assert messages._recommended_service(fits, "CMO") == "ai_outreach"
 
 
@@ -531,6 +534,16 @@ def test_banned_words_falls_back_to_default_when_settings_key_absent(monkeypatch
     assert messages._banned_words() == messages._DEFAULT_BANNED_WORDS
     hard, _ = _qa(seq_with_step(3, body=BODY3.replace("staffed", "streamlined")), packet)
     assert any("banned word 'streamline'" in h for h in hard)
+
+
+def test_banned_words_explicit_empty_list_disables_gate_not_fallback(monkeypatch, packet):
+    """An explicit `banned_words: []` in a pack is a deliberate decision to
+    disable the gate — it must NOT fall back to the default list (fallback is
+    for the ABSENT key only)."""
+    monkeypatch.setitem(messages.SETTINGS["messages"], "banned_words", [])
+    assert messages._banned_words() == []
+    hard, _ = _qa(seq_with_step(3, body=BODY3.replace("staffed", "streamlined")), packet)
+    assert not any("banned word" in h for h in hard)
 
 
 def test_banned_words_honors_settings_override(monkeypatch, packet):

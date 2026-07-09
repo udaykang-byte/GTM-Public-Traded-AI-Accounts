@@ -331,10 +331,13 @@ def _banned_pattern(entry: str) -> re.Pattern:
 
 def _banned_words() -> list[str]:
     """Canonical source: config/settings.yaml messages.banned_words. Falls
-    back to _DEFAULT_BANNED_WORDS (identical content) when the active pack's
-    settings.yaml has no such key — behavior is the same either way."""
-    words = _cfg().get("banned_words")
-    return list(words) if words else list(_DEFAULT_BANNED_WORDS)
+    back to _DEFAULT_BANNED_WORDS (identical content) ONLY when the key is
+    absent from the active pack's settings — an explicit empty list is a
+    deliberate pack decision to disable the gate, not a fallback trigger."""
+    cfg = _cfg()
+    if "banned_words" in cfg:
+        return list(cfg["banned_words"] or [])
+    return list(_DEFAULT_BANNED_WORDS)
 
 
 def _banned_patterns() -> list[tuple[str, re.Pattern]]:

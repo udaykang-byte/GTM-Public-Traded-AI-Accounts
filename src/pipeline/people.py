@@ -102,8 +102,16 @@ def match_persona(role_bucket: str, title: str = "") -> dict | None:
     variants — needed because that legacy match is a plain substring test of
     the abbreviated role_bucket token in the title (e.g. "cmo" is not a
     substring of "chief marketing officer"), so many real contacts land with
-    role_bucket == "" despite having a clearly identifiable title. Returns
-    None if PERSONAS is empty (no persona pack active) or nothing matches."""
+    role_bucket == "" despite having a clearly identifiable title.
+
+    Title matching is SPECIFICITY-FIRST, not dict-order-first: all
+    substring hits (either direction) are collected and the one with the
+    longest matched overlap wins — the overlap is the shorter of the two
+    strings, since one contains the other — so "VP Sales Development"
+    resolves to head_of_sales_development's exact variant, not vp_sales's
+    shorter "VP Sales" one. Ties go to an exact variant==title match, then
+    to persona dict order. Returns None if PERSONAS is empty (no persona
+    pack active) or nothing matches."""
     if not PERSONAS:
         return None
     defs = persona_defs()
@@ -116,11 +124,18 @@ def match_persona(role_bucket: str, title: str = "") -> dict | None:
 
     t = (title or "").strip().lower()
     if t:
+        best: dict | None = None
+        best_key = (0, 0)
         for persona in defs.values():
             for variant in persona.get("titles", []) or []:
                 v = str(variant).strip().lower()
-                if v and (v in t or t in v):
-                    return persona
+                if not v or (v not in t and t not in v):
+                    continue
+                key = (min(len(v), len(t)), 1 if v == t else 0)
+                if key > best_key:  # strict > keeps dict order on full ties
+                    best_key, best = key, persona
+        if best is not None:
+            return best
 
     return None
 
