@@ -15,15 +15,24 @@ Every company moves through a simple funnel:
 new → enriched → scored → qualified | disqualified → contacts_found
 ```
 
-- **new** — seeded from a universe screen (`discover`) or an explicit list (`ingest`)
+- **new** — seeded from a universe screen (`discover`) or an explicit list (`ingest`).
+  Both run an L1 pre-screen first (excluded tickers/SIC, cap band, exchange/OTC,
+  shell-company names) so hard-disqualified rows are written straight to
+  `disqualified` — never enriched, never spending an EDGAR/Parallel call
 - **enriched** — signals collected from SEC EDGAR (free) and Parallel.ai web research (paid)
 - **scored** — deterministic base score + LLM reasoning; companies between the
-  disqualify floor and qualify threshold stay here as the **human review band**
+  disqualify floor and qualify threshold stay here as the **human review band**.
+  Every scored company also gets a **tier** (T1 top qualified, T2 qualified, T3
+  review band, T4 disqualified) that decides who `people` and
+  `messages --prepare` work first when a per-run cap bites
 - **qualified / disqualified** — threshold decision (≥65 total AND ≥1 hard signal)
 - **contacts_found** — decision-makers resolved for qualified accounts, ready to export
 
 From `contacts_found`, the `messages` stage drafts a 4-step outreach sequence per
 contact (built on each company's fresh outreach angles) — drafts only; no sending.
+Once a sequence actually ships (outside this tool), `pipeline outcome` records what
+happened — replies, meetings, opt-outs — and `pipeline status --analytics` turns
+that log into funnel conversion and reply/meeting attribution.
 
 ## Architecture at a glance
 
@@ -36,15 +45,16 @@ flowchart LR
     end
 
     subgraph Pipeline["pipeline CLI (Typer)"]
-        DISC[discover / ingest]
+        DISC["discover / ingest<br/>(+ L1 prescreen)"]
         ENR[enrich]
-        SCORE[score]
+        SCORE["score<br/>(+ tier / priority)"]
         PEOPLE[people]
         MSG[messages]
         EXP[export]
+        OUT[outcome]
     end
 
-    DB[(Supabase<br/>companies · signals ·<br/>scores · contacts · runs)]
+    DB[(Supabase<br/>companies · signals · scores ·<br/>angles · contacts · messages ·<br/>message_events · runs)]
 
     YF --> DISC
     EDGAR --> ENR
@@ -55,12 +65,14 @@ flowchart LR
     SCORE --> DB
     PEOPLE --> DB
     MSG --> DB
+    OUT --> DB
     DB --> EXP
     EXP --> CSV[qualified.csv + messages.csv]
+    DB -.status --analytics.-> ANALYTICS[funnel / attribution rates]
 ```
 
-State lives in **Supabase** (six tables: `companies`, `signals`, `scores`, `angles`,
-`contacts`, `messages`, plus `runs`). Everything else — EDGAR caches, scoring and
+State lives in **Supabase** (`companies`, `signals`, `scores`, `angles`, `contacts`,
+`messages`, `message_events`, plus `runs`). Everything else — EDGAR caches, scoring and
 message queues, exports — is regenerable local state under `data/` (gitignored). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
 the module map and design decisions.
 
@@ -107,19 +119,23 @@ A single-company deep dive works even before ingesting:
 
 ## Commands
 
-All commands run through `uv run python -m pipeline <command>`:
+All commands run through `uv run python -m pipeline <command>`. Add `--profile
+<name>` (or set `AIPT_PROFILE=<name>`) before the command to run against a
+different ICP pack — see [Adapting it to your own ICP](#adapting-it-to-your-own-icp):
 
 | Command | What it does |
 |---------|--------------|
-| `status` | Funnel counts per stage (`--brief` for one line) |
-| `discover` | Screen the SEC universe for micro-cap sector matches and seed them |
-| `ingest TICK1,TICK2` | Add specific companies (or `--csv file.csv` with a `ticker` column) |
-| `enrich --source edgar\|parallel\|deep` | Collect signals (EDGAR free; parallel/deep are paid + capped) |
-| `score --prepare` / `--commit` | Build scoring packets → commit verdicts + qualify |
-| `people` | Find decision-makers for qualified accounts |
+| `status` | Funnel + tier counts per stage (`--brief` for one line; `--analytics` adds outcome/attribution rates) |
+| `profile --list\|--show\|--validate` | Inspect or validate the active profile pack |
+| `discover` | Screen the SEC universe for micro-cap sector matches (pre-screened) and seed them |
+| `ingest TICK1,TICK2` | Add specific companies (or `--csv file.csv`); still runs the L1 pre-screen (`--force` bypasses it) |
+| `enrich --source edgar\|parallel\|all\|deep` | Collect signals (EDGAR free; parallel/deep are paid + capped) |
+| `score --prepare` / `--commit` | Build scoring packets → commit verdicts + qualify + tier |
+| `people` | Find decision-makers for qualified accounts, strongest tier/priority first |
 | `messages --prepare` / `--commit` | Draft per-contact outreach sequences (Haiku subagents + QA gate) |
-| `export` | Write qualified accounts + contacts to `data/exports/qualified.csv` (`--messages` adds `messages.csv`) |
-| `promote TICK1,TICK2` | Move review-band companies to qualified by hand |
+| `export` | Write qualified accounts + contacts to `data/exports/qualified.csv` (`--messages` adds `messages.csv` + a deliverability checklist) |
+| `outcome <message_id>` | Record what happened to a sent sequence (`--event ...`, or `--csv` for a batch; `--ticker`/`--contact` as a fuzzy lookup) |
+| `promote TICK1,TICK2` | Move review-band (or previously disqualified) companies to qualified by hand |
 | `prune` | Remove stale/out-of-scope companies (`--dry-run` first) |
 | `apply-schema` | Apply `sql/schema.sql` to Supabase |
 
@@ -145,22 +161,27 @@ In between, the company stays in the review band for a human call.
 v2 tightens the gate: qualified also requires at least one fresh, structured outreach angle
 (funding event, leadership hire, or AI move) — see docs/SIGNALS.md.
 
+Qualified and review-band companies also get a **tier** (T1 = qualified above a
+higher score bar, T2 = qualified, T3 = review band, T4 = disqualified) and a
+**priority** score (total + evidence stacking + strongest fresh angle) that
+decides who `people` and `messages --prepare` work first once a per-run cap bites.
+
 Full detection logic and weights: [docs/SIGNALS.md](docs/SIGNALS.md) and
 `config/settings.yaml`.
 
 ## Repository layout
 
 ```
-src/pipeline/        # cli, db, models, universe, edgar_signals, parallel_signals,
-                     # parallel_client, scoring, angles, funding_events, llm, people,
-                     # messages
+src/pipeline/        # cli, config, db, models, universe, prescreen, edgar_signals,
+                     # parallel_signals, parallel_client, scoring, angles,
+                     # funding_events, llm, people, messages, outcomes, analytics
 tests/               # pytest suite — fast unit tests, no network or DB needed
-config/settings.yaml # universe band, sector→SIC map, weights, thresholds, caps
-config/services.yaml # martechs.io service catalog (drives service-fit mapping)
-config/outbound_copywriter.md  # copy framework the /outreach subagents follow
+config/               # default profile pack: settings.yaml, services.yaml,
+                     # personas.yaml, outbound_copywriter.md
+profiles/<name>/      # profile-pack overlays written by /icp (or by hand)
 sql/schema.sql       # Supabase DDL
 docs/                # runbook, signal taxonomy, architecture
-data/                # gitignored: caches, scoring queue/results, exports
+data/                # gitignored: caches, scoring/message queues+results, exports
 .claude/             # Claude Code setup: stage skills, hooks, permissions
 ```
 
@@ -173,31 +194,46 @@ data/                # gitignored: caches, scoring queue/results, exports
   through Claude Code Haiku subagents. The OpenRouter provider in
   `src/pipeline/llm.py` is the v2 path.
 
-## Adapting it to your own services
+## Adapting it to your own ICP
 
-AIPT ships configured for martechs.io, but everything vendor-specific is
-config — no code changes needed to point it at a different services business:
+Point the pipeline at a different business by running the **`/icp`** Claude
+Code skill — it interviews you (best/worst customers → discriminating
+attributes → point values → tier cutlines → sector/SIC vocabulary → services +
+voice) and writes the answers to a **profile pack** under `profiles/<name>/`.
+No code changes, no hand-editing YAML from a blank page.
 
-- `config/services.yaml` — swap in your own service catalog. Service-fit
-  mapping, decision-maker role targeting (`people`), and message drafting all
-  key off it.
-- `config/outbound_copywriter.md` — your voice, offer, and proof points. The
+A profile pack is a directory overlay: `config/` is the default pack (an
+example configuration, not a hardcoded target), and `profiles/<name>/`
+replaces any subset of its files —
+
+- `settings.yaml` — universe band, sector → SIC vocabulary (free text, not a
+  fixed enum), signal weights, qualify/disqualify/tier thresholds, per-run
+  spend caps
+- `services.yaml` — the service catalog that drives service-fit mapping,
+  decision-maker role targeting (`people`), and message drafting
+- `personas.yaml` — per-role pains/language/committee-role, used for `people`
+  targeting and cold-email personalization
+- `outbound_copywriter.md` — voice, offer, and proof points. The
   message-drafting subagents follow this file verbatim, and its banned-words
-  list pairs with the deterministic QA gate in `src/pipeline/messages.py`.
-- `config/settings.yaml` — universe band (market-cap range, sectors → SIC
-  codes), signal weights, qualify/disqualify thresholds, per-run spend caps.
+  list pairs with the deterministic QA gate in `src/pipeline/messages.py`
+
+Any file missing from a pack falls back to the default `config/` version.
+Select a pack with `--profile <name>` (or `AIPT_PROFILE=<name>`), inspect it
+with `pipeline profile --show`, and sanity-check it with
+`pipeline profile --validate`.
 
 The signal taxonomy itself ([docs/SIGNALS.md](docs/SIGNALS.md)) is
 vendor-agnostic — it detects public evidence of AI need; what you pitch
-against that evidence is up to your catalog.
+against that evidence is up to your pack.
 
 ## Contributing
 
 The suite runs in under a second (`uv run pytest`) — keep it green. Conventions,
 verification steps, and the PR flow are in [CONTRIBUTING.md](CONTRIBUTING.md).
-If you use Claude Code, the repo ships with stage skills (`/status`, `/enrich`,
-`/score`, `/outreach`, …) that encode the correct orchestration for each
-pipeline stage.
+If you use Claude Code, the repo ships with stage skills (`/status`, `/discover`,
+`/ingest`, `/enrich`, `/score`, `/people`, `/outreach`, …) that encode the
+correct orchestration for each pipeline stage, plus `/icp` to build a profile
+pack interactively instead of running a pipeline stage.
 
 ## License
 

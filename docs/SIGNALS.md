@@ -47,6 +47,24 @@ scorer (Haiku subagent) sees the base math and may deviate with justification.
 Qualify: `total ≥ 65` AND ≥1 hard signal. Disqualify: `total < 45`. Between:
 stays `scored` — human review band. All thresholds in `config/settings.yaml`.
 
+### Stacking bonus and urgency metadata (v3)
+
+Two additions ride on scoring, one in the math and one outside it:
+
+- **Stacking bonus** (`scoring.stacking` → `min_components`, `bonus`): when a
+  company's signals span ≥ `min_components` distinct components (default 3 of
+  intent/capability_gap/timing/commercial_fit), `bonus` points (default 5) are
+  added to the **deterministic base score only** — never to the LLM verdict.
+  Evidence stacked across components is a stronger buying signal than the same
+  weight piled into one. The bonus also feeds the priority composite computed
+  at `score --commit`.
+- **Urgency metadata** (`scoring.urgency.windows` → `hot`, `warm`): every
+  packet signal carries an `urgency` bucket from its `age_days` — `hot`
+  (≤30d), `warm` (≤90d), `cold` (older), `null` when undated. Packet metadata
+  only: informational context for the scorer and outreach SLAs downstream —
+  it never changes the score math (recency already decays `effective_weight`
+  separately, via `scoring.recency`).
+
 ## Outreach angles (v2)
 
 Angles are dated, structured outreach events stored in the `angles` table —
