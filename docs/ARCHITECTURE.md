@@ -114,6 +114,12 @@ producing angle rows. The qualify gate (scoring) then requires ≥1 active angle
    Each packet signal carries `age_days`, a pre-decayed `effective_weight`, and
    an `urgency` bucket (hot/warm/cold by age) — informational context for the
    scorer and downstream outreach SLAs, never part of the deterministic math.
+   A deterministic L2 pre-gate (`scoring.pre_gate`) then skips LLM scoring for
+   companies whose verdict cannot change the qualify outcome — no hard signal,
+   or base + `max_llm_lift` under the qualify threshold — by writing a synthetic
+   verdict (capped base components, `model: deterministic/pre-gate`) straight to
+   `data/scoring_results/`; `--prepare` prints them as `pre-gated N` and only
+   returns the packets that still need a subagent.
 2. LLM reasoning happens outside the pipeline process. In v1 the Claude Code
    `/score` skill spawns Haiku subagents that each read a packet + `_shared.json`
    and write a verdict JSON to `data/scoring_results/` — zero API cost. In v2 the

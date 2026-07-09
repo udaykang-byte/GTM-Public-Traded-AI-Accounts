@@ -75,7 +75,12 @@ uv run python -m pipeline enrich --source parallel --limit 10
 
 # 3. Score (v1: Haiku subagents via Claude Code — see /score skill)
 uv run python -m pipeline score --prepare
-#   -> /score skill spawns Haiku subagents -> results land in data/scoring_results/
+#   -> pre-gates companies whose verdict can't change the outcome (no hard
+#      signal, or base + scoring.pre_gate.max_llm_lift < qualify threshold):
+#      synthetic deterministic verdicts land in data/scoring_results/ directly
+#   -> /score skill spawns lean scorer subagents for the REMAINING packets only
+#      -> results land in data/scoring_results/; borderline totals (within
+#      scoring.median_band of the bar) get median-of-3 replicates per the skill
 uv run python -m pipeline score --commit
 #   -> also assigns tier (T1-T4) + a priority score — see Tiers & priority below
 

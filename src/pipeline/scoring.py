@@ -190,6 +190,54 @@ def base_components(signals: list[dict]) -> dict:
     return totals
 
 
+def pre_gate(base_total: float, has_hard: bool, cfg: dict | None = None) -> str | None:
+    """Deterministic L2 gate: return the reason a company cannot qualify no
+    matter what the LLM says — "no_hard_signal", or "base_below_reach" when
+    base_total + max_llm_lift stays under qualify_threshold — else None
+    (LLM scoring needed). Only ever blocks qualification; the review/DQ split
+    for gated companies comes from the synthetic verdict total vs the floor."""
+    cfg = cfg if cfg is not None else SETTINGS.get("scoring", {}).get("pre_gate", {})
+    if not cfg.get("enabled", False):
+        return None
+    if not has_hard:
+        return "no_hard_signal"
+    threshold = float(SETTINGS.get("scoring", {}).get("qualify_threshold", 65))
+    lift = float(cfg.get("max_llm_lift", 40))
+    if base_total + lift < threshold:
+        return "base_below_reach"
+    return None
+
+
+def pregate_verdict(ticker: str, base: dict, reason: str) -> dict:
+    """Synthetic ScoreVerdict-shaped dict for a pre-gated company: component
+    scores are the capped deterministic base components (stacking bonus is
+    base-score-only and excluded, matching the verdict schema's component sum).
+    The extra `pregate` key survives schema validation (extras are ignored)
+    and lets commit() label the score row's model honestly."""
+    maxes = {"intent": 30, "capability_gap": 25, "timing": 25, "commercial_fit": 20}
+    comps = {k: min(int(round(float(base.get(k, 0)))), m) for k, m in maxes.items()}
+    explain = {
+        "no_hard_signal": "no hard signal present, so it cannot qualify",
+        "base_below_reach": (
+            f"base score {base.get('total')} cannot reach the qualify threshold "
+            "even with the maximum observed LLM lift"
+        ),
+    }[reason]
+    return {
+        "ticker": ticker,
+        **comps,
+        "profile": "unclear",
+        "service_fit": [],
+        "reasoning": f"Pre-gated deterministically ({reason}): {explain}. Not LLM-scored.",
+        "why_now": "No fresh-timing assessment — pre-gated before LLM scoring.",
+        "evidence_cited": [],
+        "confidence": "low",
+        "angle_ranking": [],
+        "primary_angle": None,
+        "pregate": reason,
+    }
+
+
 def _derived_cohort_signal(
     company: dict, signals: list[dict], peers: list[dict], signals_by_cik: dict[int, list[dict]]
 ) -> dict | None:
@@ -216,8 +264,14 @@ def _derived_cohort_signal(
     return None
 
 
-def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",)) -> list[str]:
-    """Build scoring packets. Returns list of packet paths."""
+def prepare(
+    limit: int | None = None, statuses: tuple[str, ...] = ("enriched",)
+) -> tuple[list[str], list[dict]]:
+    """Build scoring packets. Returns (packet paths needing LLM scoring,
+    pre-gated companies). Pre-gated companies get their packet written to the
+    queue and a synthetic deterministic verdict written straight to results,
+    so a plain `commit()` handles them uniformly — they just never cost a
+    subagent."""
     companies: list[dict] = []
     for st in statuses:
         companies.extend(db.get_companies(status=st))
@@ -250,6 +304,7 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
     ]
     db.mark_angles_stale(stale_ids)
     written: list[str] = []
+    gated: list[dict] = []
     for company in companies:
         signals = signals_by_cik.get(int(company["cik"]), [])
         slim_signals = [
@@ -299,8 +354,17 @@ def prepare(limit: int | None = None, statuses: tuple[str, ...] = ("enriched",))
         }
         path = QUEUE_DIR / f"{company['ticker']}.json"
         path.write_text(json.dumps(packet, indent=2, default=str))
+        gate_reason = pre_gate(
+            packet["base_score"]["total"], bool(packet["hard_signals_present"])
+        )
+        if gate_reason:
+            verdict = pregate_verdict(company["ticker"], packet["base_score"], gate_reason)
+            Path(output_path).write_text(json.dumps(verdict, indent=2))
+            total = sum(verdict[c] for c in ("intent", "capability_gap", "timing", "commercial_fit"))
+            gated.append({"ticker": company["ticker"], "total": total, "reason": gate_reason})
+            continue
         written.append(str(path))
-    return written
+    return written, gated
 
 
 def commit(run_id: str | None = None) -> dict:
@@ -327,10 +391,12 @@ def commit(run_id: str | None = None) -> dict:
             summary["orphan"].append(ticker)
             continue
         try:
-            verdict = ScoreVerdict.model_validate_json(result_file.read_text())
+            raw = json.loads(result_file.read_text())
+            verdict = ScoreVerdict.model_validate(raw)
         except (ValidationError, json.JSONDecodeError) as exc:
             summary["invalid"].append(f"{ticker}: {str(exc)[:200]}")
             continue
+        is_pregate = isinstance(raw, dict) and bool(raw.get("pregate"))
 
         packet = json.loads(packet_file.read_text())
         company = db.get_company_by_ticker(ticker)
@@ -394,7 +460,7 @@ def commit(run_id: str | None = None) -> dict:
             "gate_reason": gate_reason,
             "tier": tier,
             "priority": priority,
-            "model": "claude-code/haiku-subagent",
+            "model": "deterministic/pre-gate" if is_pregate else "claude-code/haiku-subagent",
         })
 
         db.set_status(company["cik"], new_status, profile=verdict.profile.value, tier=tier)

@@ -60,6 +60,19 @@ scoring:
   disqualify_below: 45      # total < this -> disqualified; between = stays 'scored' for review
   require_angle: true        # qualified needs >=1 active outreach angle (v2 gate); false = v1 behavior
   hard_signals: [E1, E3, E4, E5, P1, P2, P3]
+  # Deterministic pre-gate: skip LLM scoring when the verdict cannot change the
+  # qualify outcome — no hard signal present, or base_total + max_llm_lift
+  # below qualify_threshold. Gated companies commit a synthetic deterministic
+  # verdict (total = capped base components, no stacking). max_llm_lift 40
+  # keeps every qualifier in the 244 archived verdicts (min qualifying base
+  # 26.2 -> gate cutoff base < 25); on that history it skips ~51% of LLM runs.
+  pre_gate:
+    enabled: true
+    max_llm_lift: 40
+  # Median-of-3 band: a verdict total within +/- this of qualify_threshold is
+  # borderline — score 3 independent replicates and commit the median; never
+  # re-roll to pass. Applied by the /score skill, read from here.
+  median_band: 8
   # Dated event signals (E3/E4/E7/P3) keep full weight for `full_days`, then
   # decay linearly to `floor` x weight at their collection-window edge.
   recency:

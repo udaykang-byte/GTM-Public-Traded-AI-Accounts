@@ -529,7 +529,10 @@ def score(
         from pipeline.config import QUEUE_DIR, RESULTS_DIR
         from pipeline.llm import get_provider
 
-        paths = scoring.prepare(limit=limit, statuses=status_tuple)
+        paths, gated = scoring.prepare(limit=limit, statuses=status_tuple)
+        if gated:
+            console.print(f"pre-gated {len(gated)} (deterministic verdicts written): " + ", ".join(
+                f"{g['ticker']}={g['total']}({g['reason']})" for g in gated))
         llm = get_provider("openrouter")
         for p in paths:
             packet = json.loads(Path(p).read_text())
@@ -541,8 +544,14 @@ def score(
         return
 
     if prepare:
-        paths = scoring.prepare(limit=limit, statuses=status_tuple)
-        console.print(f"Prepared {len(paths)} scoring packets in data/scoring_queue/")
+        paths, gated = scoring.prepare(limit=limit, statuses=status_tuple)
+        if gated:
+            console.print(
+                f"pre-gated {len(gated)} (deterministic verdicts already in data/scoring_results/, "
+                "no subagent needed): " + ", ".join(
+                    f"{g['ticker']}={g['total']}({g['reason']})" for g in gated)
+            )
+        console.print(f"Prepared {len(paths)} scoring packets needing LLM scoring in data/scoring_queue/")
         console.print("Next: use the /score skill (Haiku subagents), then `score --commit`.")
         for p in paths:
             console.print(f"  {p}")

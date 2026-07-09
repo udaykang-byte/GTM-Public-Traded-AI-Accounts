@@ -60,12 +60,16 @@ def dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(scoring, "RESULTS_DIR", r)
     monkeypatch.setattr(scoring, "ARCHIVE_DIR", a)
     monkeypatch.setattr(scoring, "db", FakeDB())
+    # pre-gate off by default so these tests exercise the LLM scoring path
+    # regardless of live settings.yaml; the pre-gate tests re-enable it
+    monkeypatch.setitem(scoring.SETTINGS.setdefault("scoring", {}), "pre_gate", {"enabled": False})
     return q, r, a
 
 
 def test_prepare_writes_shared_file_and_slim_packets(dirs):
     q, r, a = dirs
-    written = scoring.prepare()
+    written, gated = scoring.prepare()
+    assert gated == []
 
     shared = json.loads((q / "_shared.json").read_text())
     assert set(shared) == {"services_catalog", "rubric", "output_schema", "instructions"}
@@ -381,3 +385,62 @@ def test_commit_stores_tier_at_boundaries(dirs, intent, capg, timing, comm, expe
 def test_commit_stores_priority_on_score_row(dirs):
     _run_commit(dirs, [dict(ANGLE_ROW)], make_verdict())
     assert isinstance(scoring.db.scores[-1]["priority"], (int, float))
+
+
+# ---- deterministic pre-gate (v3.1: skip LLM when the verdict can't change the outcome) ----
+
+PRE_GATE_ON = {"enabled": True, "max_llm_lift": 40}
+
+
+def test_pre_gate_disabled_returns_none():
+    assert scoring.pre_gate(0.0, has_hard=False, cfg={"enabled": False}) is None
+
+
+def test_pre_gate_no_hard_signal_blocks_regardless_of_base():
+    assert scoring.pre_gate(90.0, has_hard=False, cfg=PRE_GATE_ON) == "no_hard_signal"
+
+
+def test_pre_gate_base_below_reach():
+    # qualify_threshold 65, lift 40 -> gate fires below base 25
+    assert scoring.pre_gate(24.9, has_hard=True, cfg=PRE_GATE_ON) == "base_below_reach"
+
+
+def test_pre_gate_reachable_base_needs_llm():
+    assert scoring.pre_gate(25.0, has_hard=True, cfg=PRE_GATE_ON) is None
+
+
+def test_pregate_verdict_is_schema_valid_and_caps_components():
+    from pipeline.models import ScoreVerdict
+    base = {"intent": 99.0, "capability_gap": 3.4, "timing": 0.0,
+            "commercial_fit": 12.6, "stacking_bonus": 5.0, "total": 115.0}
+    v = ScoreVerdict.model_validate(scoring.pregate_verdict("TST", base, "no_hard_signal"))
+    assert v.intent == 30 and v.capability_gap == 3 and v.commercial_fit == 13
+    assert v.profile.value == "unclear" and v.service_fit == []
+
+
+def test_prepare_pre_gates_low_base_and_writes_synthetic_result(dirs, monkeypatch):
+    q, r, a = dirs
+    monkeypatch.setitem(scoring.SETTINGS["scoring"], "pre_gate", PRE_GATE_ON)
+    written, gated = scoring.prepare()  # TST base = 15 (one E1), hard signal present
+    assert written == []
+    assert gated == [{"ticker": "TST", "total": 15, "reason": "base_below_reach"}]
+    assert (q / "TST.json").exists()  # packet still written for commit
+    result = json.loads((r / "TST.json").read_text())
+    assert result["pregate"] == "base_below_reach"
+
+
+def test_commit_of_pregated_result_labels_model_and_disqualifies(dirs, monkeypatch):
+    q, r, a = dirs
+    monkeypatch.setitem(scoring.SETTINGS["scoring"], "pre_gate", PRE_GATE_ON)
+    scoring.prepare()
+    summary = scoring.commit(run_id="t")
+    # TST synthetic total 15 < disqualify_below 45 -> disqualified, T4
+    assert [x["ticker"] for x in summary["disqualified"]] == ["TST"]
+    row = scoring.db.scores[-1]
+    assert row["model"] == "deterministic/pre-gate"
+    assert row["tier"] == "T4"
+
+
+def test_commit_of_llm_result_keeps_model_label(dirs):
+    _run_commit(dirs, [dict(ANGLE_ROW)], make_verdict())
+    assert scoring.db.scores[-1]["model"] == "claude-code/haiku-subagent"
