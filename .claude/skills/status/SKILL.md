@@ -23,3 +23,9 @@ Then summarize for the user:
 Failure modes:
 - `Missing SUPABASE_URL` → .env not configured; point the user at `.env.example`.
 - Connection errors → Supabase project paused or wrong key; ask user to check dashboard.
+
+## Outcome analytics (v3 phase 4)
+
+`uv run python -m pipeline status --analytics` adds funnel conversion (rate vs previous stage), avg time-in-stage (labelled approximate for rows predating `companies.status_changed_at`), and — once outcomes have been recorded — a sent → replied → positive_reply → meeting funnel with a benchmark-band callout on positive reply rate (the north star metric), plus attribution tables by archetype / angle family / service. Every section guards against thin samples by printing "insufficient data" below `analytics.min_sends_for_attribution` sends, and degrades cleanly (same PGRST205 pattern as the tier breakdown) on a database that hasn't run `apply-schema` for this feature yet.
+
+Outcomes get recorded with `uv run python -m pipeline outcome <message_id> --event replied [--date YYYY-MM-DD] [--note "..."]` (events: `approved/rejected/exported/sent/bounced/replied/positive_reply/meeting/opt_out`; append-only — status only ever advances forward, never backward, and never past a terminal state like `bounced`/`opted_out`). Use `--csv path` for batch imports (columns `message_id,event,date,note`), or `--ticker X --contact "name"` as a fuzzy lookup when the message_id isn't on hand — ambiguous matches print candidates and exit nonzero rather than guessing.
