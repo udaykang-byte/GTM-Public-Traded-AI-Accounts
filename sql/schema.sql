@@ -35,6 +35,12 @@ alter table companies drop constraint if exists companies_sector_bucket_check;
 -- need to join scores. NULL tier (pre-v3 rows) is treated as T3 in app code.
 alter table companies add column if not exists dq_reason text not null default '';
 alter table companies add column if not exists tier text;
+-- v3 phase 4: time-in-stage — stamped by db.set_status on every transition
+-- going forward; backfilled from updated_at for existing rows (approximate:
+-- updated_at also moves on any column update, not just a status change —
+-- analytics.py labels durations computed from backfilled rows accordingly).
+alter table companies add column if not exists status_changed_at timestamptz;
+update companies set status_changed_at = updated_at where status_changed_at is null;
 
 create table if not exists signals (
   id             bigint generated always as identity primary key,
@@ -146,6 +152,29 @@ create table if not exists messages (
 );
 create index if not exists messages_company_idx on messages (company_cik);
 create index if not exists messages_status_idx on messages (status);
+-- v3 phase 4: widen messages.status additively so outcome events (recorded
+-- via `pipeline outcome` / outcomes.record) can advance a draft all the way
+-- to 'meeting' — existing rows (draft/approved/rejected/exported/sent) still
+-- satisfy the new CHECK. Drop + re-add kept adjacent so one apply-schema run
+-- does both.
+alter table messages drop constraint if exists messages_status_check;
+alter table messages add constraint messages_status_check
+  check (status in ('draft','approved','rejected','exported','sent','bounced',
+                     'replied','positive_reply','meeting','opted_out'));
+
+-- v3 phase 4: append-only outcome events per drafted message — the audit
+-- trail behind messages.status advancement (see outcomes.py). 'opt_out' is
+-- the event name; it maps to the 'opted_out' status value above.
+create table if not exists message_events (
+  id           bigint generated always as identity primary key,
+  message_id   bigint not null references messages (id) on delete cascade,
+  event        text not null check (event in
+               ('approved','rejected','exported','sent','bounced','replied',
+                'positive_reply','meeting','opt_out')),
+  occurred_at  timestamptz not null default now(),
+  note         text not null default ''
+);
+create index if not exists message_events_message_idx on message_events (message_id);
 
 create table if not exists runs (
   id          bigint generated always as identity primary key,
@@ -177,3 +206,4 @@ alter table contacts  enable row level security;
 alter table runs      enable row level security;
 alter table angles    enable row level security;
 alter table messages  enable row level security;
+alter table message_events enable row level security;

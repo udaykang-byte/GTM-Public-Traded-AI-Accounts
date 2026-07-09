@@ -181,3 +181,18 @@ messages:
   # v3: minimum step-1 personalization score (0-5, see messages._personalization_score)
   # before qa_check appends a "personalization N/5" warning. Never a hard fail.
   personalization_min: 3
+
+# v3 phase 4: outcome analytics (pipeline analytics.py / `pipeline status
+# --analytics`). Benchmarks are informational callouts only — they never
+# gate anything (unlike scoring.qualify_threshold).
+analytics:
+  # cold-email positive-reply-rate bands (north star metric) — see
+  # analytics.benchmark_band(). Values are fractions of sends (0.03 = 3%).
+  benchmarks:
+    positive_reply_rate:
+      poor: 0.01
+      avg: 0.03
+      good: 0.08
+  # a funnel/attribution section with fewer sends than this prints
+  # "insufficient data (<N sent)" instead of a rate — small samples lie.
+  min_sends_for_attribution: 10
