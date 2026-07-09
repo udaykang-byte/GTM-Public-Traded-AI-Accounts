@@ -61,6 +61,21 @@ uv run python -m pipeline export --messages      # qualified.csv + messages.csv
 `status` shows the funnel any time. Single-company deep dive:
 `enrich --ticker XYZ --dry-run` (works even if XYZ isn't in the DB yet).
 
+Running against a different ICP? Select a pack with `--profile <name>` (or
+`AIPT_PROFILE`), inspect it via `pipeline profile --list/--show/--validate`,
+or build one interactively with `/icp`.
+
+## Outcomes & analytics
+
+Record what happens after a draft ships: `pipeline outcome <message_id>
+--event replied` (or `--csv path` for a batch of `message_id,event,date,note`
+rows) appends to the append-only `message_events` log and advances
+`messages.status` along its monotonic ladder (draft -> ... -> meeting, or a
+terminal state like bounced/opted_out) — a no-op event is still logged, just
+without a status change. Once outcomes are logged, `pipeline status
+--analytics` renders funnel conversion, time-in-stage, and reply/meeting
+attribution by archetype / angle_family / service.
+
 ## Status machine
 
 `new → enriched → scored → qualified | disqualified → contacts_found`

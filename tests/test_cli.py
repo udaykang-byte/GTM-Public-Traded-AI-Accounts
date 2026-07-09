@@ -306,3 +306,36 @@ def test_outcome_csv_batch_reports_failed_rows_and_exits_nonzero(outcomes_db, tm
         cli.outcome(message_id=None, event=None, date=None, note="", csv=csv_path, ticker=None, contact=None)
 
     assert outcomes_db._messages[1]["status"] == "sent"
+
+
+def test_outcome_csv_batch_survives_unexpected_row_error(outcomes_db, tmp_path, monkeypatch, capsys):
+    """A row whose record() call blows up with something other than
+    KeyError/ValueError/BadParameter (e.g. a transient DB error) must be
+    reported as failed without aborting the batch — subsequent rows still
+    get processed, per the docstring's every-row-attempted contract."""
+    from pipeline import db as db_mod
+
+    real_insert = db_mod.insert_message_event
+
+    def flaky_insert(message_id, event, occurred_at, note=""):
+        if message_id == 1:
+            raise RuntimeError("connection reset")
+        return real_insert(message_id, event, occurred_at, note)
+
+    monkeypatch.setattr(db_mod, "insert_message_event", flaky_insert)
+
+    csv_path = tmp_path / "batch.csv"
+    csv_path.write_text(
+        "message_id,event,date,note\n"
+        "1,sent,,boom\n"
+        "2,replied,,from spreadsheet\n"
+    )
+    with pytest.raises(typer.Exit):
+        cli.outcome(message_id=None, event=None, date=None, note="", csv=csv_path, ticker=None, contact=None)
+
+    # row 1's unexpected error left it unchanged; row 2 still processed
+    assert outcomes_db._messages[1]["status"] == "draft"
+    assert outcomes_db._messages[2]["status"] == "replied"
+    out = capsys.readouterr().out
+    assert "row 1: connection reset" in out
+    assert "Recorded 1/2 events, 1 failed" in out

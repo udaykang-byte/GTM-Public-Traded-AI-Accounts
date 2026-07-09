@@ -877,8 +877,10 @@ def _parse_date_opt(value: str | None) -> str | None:
 
 def _outcome_csv_batch(path: Path) -> None:
     """Batch mode for `pipeline outcome --csv`: columns message_id,event,date,note
-    (date/note optional). Every row is attempted; failures are reported per
-    row and the command exits nonzero if any row failed."""
+    (date/note optional). Every row is attempted; failures — including
+    transient/unexpected errors (e.g. a DB hiccup) — are reported per row and
+    do not abort the remaining rows; the command exits nonzero if any row
+    failed."""
     from pipeline import outcomes
 
     with open(path, newline="") as fh:
@@ -899,7 +901,7 @@ def _outcome_csv_batch(path: Path) -> None:
             suffix = "" if result["advanced"] else " (no status change)"
             console.print(f"  row {i}: message {message_id} {event} ({arrow}){suffix}")
             ok += 1
-        except (KeyError, ValueError, typer.BadParameter) as exc:
+        except Exception as exc:
             console.print(f"[red]  row {i}: {exc}[/red]")
             failed += 1
 

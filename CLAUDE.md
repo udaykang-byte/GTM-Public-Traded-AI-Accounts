@@ -17,8 +17,9 @@ coverage is derived from the `messages` table.
 
 ```bash
 uv run python -m pipeline status            # funnel counts (--brief for one line)
+uv run python -m pipeline status --analytics # + outcome funnel, reply/meeting rates, time-in-stage
 uv run python -m pipeline discover          # screen SEC universe -> seed companies
-uv run python -m pipeline ingest AAPL,TWLO  # or --csv path (ticker column)
+uv run python -m pipeline ingest AAPL,TWLO  # or --csv path (ticker column); --force bypasses the prescreen
 uv run python -m pipeline enrich --source edgar --limit 10
 uv run python -m pipeline enrich --source parallel --limit 10
 uv run python -m pipeline score --prepare   # packets -> data/scoring_queue/
@@ -26,7 +27,9 @@ uv run python -m pipeline score --commit    # verdicts -> Supabase + qualify
 uv run python -m pipeline people --limit 5  # contacts for qualified accounts
 uv run python -m pipeline messages --prepare # per-contact packets -> data/message_queue/
 uv run python -m pipeline messages --commit  # QA gate -> messages table (drafts)
+uv run python -m pipeline outcome 42 --event replied  # log an outcome event; --csv path for batch
 uv run python -m pipeline export --messages  # qualified.csv + messages.csv
+uv run python -m pipeline profile --list/--show/--validate  # inspect the active profile pack
 ```
 
 Skills exist for each stage: /ingest /discover /enrich /score /people /outreach

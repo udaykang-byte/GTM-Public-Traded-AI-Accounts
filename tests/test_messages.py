@@ -536,6 +536,16 @@ def test_banned_words_falls_back_to_default_when_settings_key_absent(monkeypatch
     assert any("banned word 'streamline'" in h for h in hard)
 
 
+def test_banned_words_falls_back_to_default_when_settings_key_is_null(monkeypatch, packet):
+    """A pack with a bare `banned_words:` key (YAML null) must fall back to
+    the default list, same as an absent key — it must NOT be treated as an
+    explicit empty list (that would silently disable the QA gate)."""
+    monkeypatch.setitem(messages.SETTINGS["messages"], "banned_words", None)
+    assert messages._banned_words() == messages._DEFAULT_BANNED_WORDS
+    hard, _ = _qa(seq_with_step(3, body=BODY3.replace("staffed", "streamlined")), packet)
+    assert any("banned word 'streamline'" in h for h in hard)
+
+
 def test_banned_words_explicit_empty_list_disables_gate_not_fallback(monkeypatch, packet):
     """An explicit `banned_words: []` in a pack is a deliberate decision to
     disable the gate — it must NOT fall back to the default list (fallback is

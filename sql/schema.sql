@@ -41,6 +41,9 @@ alter table companies add column if not exists tier text;
 -- analytics.py labels durations computed from backfilled rows accordingly).
 alter table companies add column if not exists status_changed_at timestamptz;
 update companies set status_changed_at = updated_at where status_changed_at is null;
+-- default for rows inserted after this migration (backfill above already
+-- covers pre-existing rows, so ordering this after it keeps them untouched).
+alter table companies alter column status_changed_at set default now();
 
 create table if not exists signals (
   id             bigint generated always as identity primary key,

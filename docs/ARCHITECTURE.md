@@ -53,10 +53,11 @@ All code lives in `src/pipeline/` — one module per responsibility:
 | Module | Responsibility |
 |--------|----------------|
 | `cli.py` | Typer entrypoint; every command, cap enforcement, run logging |
-| `config.py` | Loads `.env` + `config/settings.yaml`; single access point for configuration |
+| `config.py` | Loads `.env` + the active profile pack's `settings.yaml` (`config/` default, `profiles/<name>/` overlay); single access point for configuration |
 | `db.py` | All Supabase reads/writes; nothing else touches the database |
 | `models.py` | Pydantic models: Company, Signal, ScoreVerdict, Contact |
 | `universe.py` | SEC universe screen: exchange/SIC/market-cap filters, SPAC exclusion |
+| `prescreen.py` | L1 pre-screen: pure `check()` shared by `ingest` and `universe.screen()` — cheap exclusions before any EDGAR/Parallel spend |
 | `edgar_signals.py` | E1–E9 collectors over edgartools (10-K text, 8-K items, XBRL, DEF 14A) |
 | `parallel_client.py` | Thin Parallel.ai Task API client: create, poll, parse |
 | `parallel_signals.py` | P1–P6 collector: one structured research task per company |
@@ -66,6 +67,8 @@ All code lives in `src/pipeline/` — one module per responsibility:
 | `funding_events.py` | EDGAR funding-event collector → funding angles |
 | `people.py` | Contact discovery for qualified accounts via Parallel |
 | `messages.py` | Outreach drafting: per-contact packet build, deterministic copy QA gate, draft persistence |
+| `outcomes.py` | Append-only outcome events (`message_events`) + monotonic status advancement for drafted messages |
+| `analytics.py` | Outcome analytics: funnel conversion, time-in-stage, message attribution — pure computation, `render()` drives `status --analytics` |
 
 Dependency direction is strictly inward: collectors, `people.py`, and
 `messages.py` depend on `db.py`/`models.py`/`config.py`, never on each other.
