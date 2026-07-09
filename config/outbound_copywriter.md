@@ -10,8 +10,11 @@
   thresholds. Adapted 2026-07-07 from the generic outbound-copywriter template;
   the customization interview below is FILLED, not a questionnaire.
 
-  KEEP IN SYNC: the banned-words list also lives as BANNED_WORDS in
-  src/pipeline/messages.py (the deterministic QA gate). Change both together.
+  KEEP IN SYNC: the banned-words list's SOURCE OF TRUTH is now
+  config/settings.yaml (messages.banned_words) — src/pipeline/messages.py
+  only keeps a hardcoded copy as a fallback default for packs without that
+  key. Change settings.yaml first; update this file and the fallback copy
+  to match.
 -->
 
 ## Business Context (customization interview — filled 2026-07-07)
@@ -172,6 +175,25 @@ window." (Analyst robot voice — nobody talks like this.)
 Bad: "I came across your company and was impressed by your growth."
 Bad: "I hope this email finds you well."
 
+**Observation → Implication → Bridge (O-I-B): a formula for the opener.**
+The Good examples above all follow the same three-beat shape — use it
+explicitly when a blank page isn't working:
+
+1. **Observation** — the one humanized clause on the trigger event. Not the
+   filing, the human version of it: "Congrats on the raise." / "You've been
+   public about going big on AI."
+2. **Implication** — the pain THIS persona feels because of it, right now.
+   If the packet has a matched persona, its `pains` and
+   `language.their_words` are the raw material here — use their vocabulary,
+   don't paraphrase it into agency-speak. No persona match? Fall back to the
+   angle's own why_now/reasoning.
+3. **Bridge** — one short clause that hands off into Agitate without
+   pitching yet ("...and hiring your way there eats half of it" already
+   bridges into the cost-of-inaction beat that follows).
+
+O-I-B is the P step's internal shape, not a new step — still 1-2 lines, still
+has to pass the "could I send this to 1,000 people?" test.
+
 ### A — Agitate
 Name the specific pain in their language, 2–3 sentences max. Agitate the cost
 of inaction, not the problem itself. Tie it to their profile: laggards feel
@@ -308,7 +330,9 @@ the deal.
   gap", "GTM velocity", "go-to-market motion". No day-precise dates or filing
   form names anywhere. Say it the way you'd say it across a table.
 
-**Banned words** (deterministic QA gate — any hit fails the draft):
+**Banned words** (deterministic QA gate — any hit fails the draft). Source of
+truth: `config/settings.yaml` → `messages.banned_words` — edit the list there;
+this copy is for human reading and must be kept in sync by hand.
 leverage, utilize, streamline, comprehensive, robust, innovative, cutting-edge,
 game-changing, revolutionary, disruptive, synergy, best-in-class, world-class,
 next-generation, solution (say "system" or "approach"), excited to, passionate
