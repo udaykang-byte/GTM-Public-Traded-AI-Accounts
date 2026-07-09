@@ -75,7 +75,13 @@ def delete_new_companies(ciks: list[int]) -> int:
 
 
 def set_status(cik: int, status: Status | str, profile: str | None = None, tier: str | None = None) -> None:
-    patch: dict = {"status": status.value if isinstance(status, Status) else status}
+    # v3 phase 4: stamp status_changed_at on every transition so analytics can
+    # compute time-in-stage. Pre-v3 rows fall back to a schema.sql backfill
+    # from updated_at (see analytics.py — labelled "approximate" there).
+    patch: dict = {
+        "status": status.value if isinstance(status, Status) else status,
+        "status_changed_at": datetime.now(timezone.utc).isoformat(),
+    }
     if profile is not None:
         patch["profile"] = profile
     if tier is not None:
@@ -261,6 +267,54 @@ def all_messages() -> dict[int, list[dict]]:
             grouped.setdefault(int(r["company_cik"]), []).append(r)
         if len(rows) < page:
             return grouped
+        offset += page
+
+
+def get_message(message_id: int) -> dict | None:
+    rows = client().table("messages").select("*").eq("id", message_id).limit(1).execute().data
+    return rows[0] if rows else None
+
+
+def find_messages(ticker: str, contact: str) -> list[dict]:
+    """Fuzzy lookup fallback for `pipeline outcome --ticker --contact` when
+    message_id is omitted: exact ticker + case-insensitive substring match
+    on the contact-name snapshot."""
+    rows = (
+        client().table("messages").select("*").eq("ticker", ticker.upper()).execute().data or []
+    )
+    needle = contact.strip().lower()
+    return [r for r in rows if needle in (r.get("contact_name") or "").lower()]
+
+
+def advance_message_status(message_id: int, status: str) -> None:
+    """Set messages.status directly — callers (outcomes.record) have already
+    applied the monotonic-advancement rule; this is the raw write."""
+    client().table("messages").update({"status": status}).eq("id", message_id).execute()
+
+
+# ---------- message_events (v3 phase 4: outcome tracking) ----------
+
+def insert_message_event(message_id: int, event: str, occurred_at: str, note: str = "") -> None:
+    """Always insert — the events table is an append-only audit trail
+    (see outcomes.record); it never gets wiped or upserted."""
+    client().table("message_events").insert(
+        {"message_id": message_id, "event": event, "occurred_at": occurred_at, "note": note}
+    ).execute()
+
+
+def all_message_events() -> list[dict]:
+    """Every outcome event, flat — small table, one paginated fetch mirrors
+    all_signals()/all_angles()/all_messages()."""
+    rows: list[dict] = []
+    page, offset = 1000, 0
+    while True:
+        batch = (
+            client().table("message_events").select("*")
+            .order("id").range(offset, offset + page - 1).execute().data
+        ) or []
+        rows.extend(batch)
+        if len(batch) < page:
+            return rows
         offset += page
 
 
