@@ -279,7 +279,12 @@ def prepare(
         companies = companies[:limit]
 
     schema = ScoreVerdict.model_json_schema()
-    shared_path = QUEUE_DIR / "_shared.json"
+    # Queue filenames carry a run stamp so every prepare produces
+    # never-before-seen paths: the claude-mem read-priming hook truncates
+    # Reads of any path it has prior observations for, which starves the
+    # scorer subagents when packet paths repeat across runs.
+    run_stamp = time.strftime("%Y%m%d-%H%M%S")
+    shared_path = QUEUE_DIR / f"_shared-{run_stamp}.json"
     shared_path.write_text(json.dumps({
         "services_catalog": SERVICES,
         "rubric": RUBRIC,
@@ -352,7 +357,7 @@ def prepare(
                 "in markdown."
             ),
         }
-        path = QUEUE_DIR / f"{company['ticker']}.json"
+        path = QUEUE_DIR / f"{company['ticker']}-{run_stamp}.json"
         path.write_text(json.dumps(packet, indent=2, default=str))
         gate_reason = pre_gate(
             packet["base_score"]["total"], bool(packet["hard_signals_present"])
@@ -380,16 +385,22 @@ def commit(run_id: str | None = None) -> dict:
     archive = ARCHIVE_DIR / run_id
     archive.mkdir(parents=True, exist_ok=True)
 
-    shared_path = QUEUE_DIR / "_shared.json"
-    if shared_path.exists():
-        shutil.copy2(shared_path, archive / "_shared.json")
+    shared_files = sorted(QUEUE_DIR.glob("_shared*.json"))
+    if shared_files:
+        shutil.copy2(shared_files[-1], archive / "_shared.json")
 
     for result_file in sorted(RESULTS_DIR.glob("*.json")):
         ticker = result_file.stem.upper()
-        packet_file = QUEUE_DIR / f"{ticker}.json"
-        if not packet_file.exists():
+        # queue filenames are run-stamped (TICKER-<stamp>.json) to defeat
+        # read-priming; newest stamp wins, bare TICKER.json accepted as legacy
+        candidates = sorted(QUEUE_DIR.glob(f"{ticker}-*.json"))
+        legacy = QUEUE_DIR / f"{ticker}.json"
+        if legacy.exists():
+            candidates.insert(0, legacy)
+        if not candidates:
             summary["orphan"].append(ticker)
             continue
+        packet_file = candidates[-1]
         try:
             raw = json.loads(result_file.read_text())
             verdict = ScoreVerdict.model_validate(raw)
@@ -472,8 +483,9 @@ def commit(run_id: str | None = None) -> dict:
         shutil.move(str(result_file), archive / result_file.name)
         shutil.move(str(packet_file), archive / f"packet_{ticker}.json")
 
-    if shared_path.exists() and not pending_queue():
-        shared_path.unlink()  # queue fully drained — next prepare rewrites it
+    if not pending_queue():  # queue fully drained — next prepare rewrites shared
+        for f in QUEUE_DIR.glob("_shared*.json"):
+            f.unlink()
 
     return summary
 

@@ -13,12 +13,16 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Read(./**)",
-      "Read(//Users/udaykang/AI_Public Traded/**)"
+      "Read(//Users/udaykang/AI_Public Traded/**)",
+      "Bash(cat:*)"
     ],
     "deny": [
       "Read(./.env)",
       "Edit(./.env)",
-      "Write(./.env)"
+      "Write(./.env)",
+      "Bash(cat .env:*)",
+      "Bash(cat ./.env:*)",
+      "Bash(cat \"/Users/udaykang/AI_Public Traded/.env\":*)"
     ]
   },
   "hooks": {

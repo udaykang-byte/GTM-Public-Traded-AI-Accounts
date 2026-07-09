@@ -66,21 +66,35 @@ def dirs(tmp_path, monkeypatch):
     return q, r, a
 
 
+def _qfile(q, ticker="TST"):
+    """Queue filenames are run-stamped (TICKER-<stamp>.json) to defeat the
+    claude-mem read-priming hook; tests locate them by prefix."""
+    matches = sorted(q.glob(f"{ticker}-*.json"))
+    assert matches, f"no queue packet for {ticker}"
+    return matches[-1]
+
+
+def _shared_file(q):
+    matches = sorted(q.glob("_shared*.json"))
+    assert matches, "no shared file in queue"
+    return matches[-1]
+
+
 def test_prepare_writes_shared_file_and_slim_packets(dirs):
     q, r, a = dirs
     written, gated = scoring.prepare()
     assert gated == []
 
-    shared = json.loads((q / "_shared.json").read_text())
+    shared = json.loads(_shared_file(q).read_text())
     assert set(shared) == {"services_catalog", "rubric", "output_schema", "instructions"}
 
-    assert written == [str(q / "TST.json")]
-    packet = json.loads((q / "TST.json").read_text())
+    assert written == [str(_qfile(q))]
+    packet = json.loads(_qfile(q).read_text())
     for heavy in ("services_catalog", "rubric", "output_schema"):
         assert heavy not in packet
-    assert packet["shared_file"] == (q / "_shared.json").as_posix()
+    assert packet["shared_file"] == _shared_file(q).as_posix()
     assert packet["output_path"] == (r / "TST.json").as_posix()
-    assert "_shared.json" in packet["instructions"]
+    assert "_shared" in packet["instructions"]
     assert packet["base_score"]["total"] > 0
 
 
@@ -88,7 +102,7 @@ def test_pending_queue_ignores_shared_file(dirs):
     q, r, a = dirs
     scoring.prepare()
     names = [p.name for p in scoring.pending_queue()]
-    assert names == ["TST.json"]
+    assert len(names) == 1 and names[0].startswith("TST-")
 
 
 # a real archived verdict doubles as a schema-valid result fixture
@@ -116,7 +130,7 @@ def test_commit_archives_shared_file_and_drains_queue(dirs):
     assert (run_dir / "_shared.json").exists()
     assert (run_dir / "TST.json").exists()
     assert (run_dir / "packet_TST.json").exists()
-    assert not (q / "_shared.json").exists()  # queue drained -> shared file removed
+    assert not list(q.glob("_shared*.json"))  # queue drained -> shared files removed
     assert scoring.db.scores and scoring.db.statuses
 
 
@@ -159,7 +173,7 @@ def test_packet_includes_only_active_angles(dirs):
     q, r, a = dirs
     scoring.db.angles_rows = [dict(ANGLE_ROW), dict(STALE_ANGLE_ROW)]
     scoring.prepare()
-    packet = json.loads((q / "TST.json").read_text())
+    packet = json.loads(_qfile(q).read_text())
     assert [x["fingerprint"] for x in packet["angles"]] == ["funding:0001234-26-000042"]
     assert packet["angles"][0]["age_days"] == 20
 
@@ -275,7 +289,7 @@ def test_urgency_of_buckets():
 def test_prepare_adds_urgency_to_signals(dirs):
     q, r, a = dirs
     scoring.prepare()
-    packet = json.loads((q / "TST.json").read_text())
+    packet = json.loads(_qfile(q).read_text())
     assert packet["signals"][0]["urgency"] in ("hot", "warm", "cold")
 
 
@@ -294,7 +308,7 @@ def test_derived_cohort_signal_carries_urgency_key(dirs):
         **{i: [dict(SIGNAL)] for i in range(2, 8)},
     }
     scoring.prepare()
-    packet = json.loads((q / "TST.json").read_text())
+    packet = json.loads(_qfile(q).read_text())
     e8 = [s for s in packet["signals"] if s["type"] == "E8"]
     assert e8, "derived cohort signal expected in packet"
     assert "urgency" in e8[0] and e8[0]["urgency"] is None
@@ -305,7 +319,7 @@ def test_commit_handles_signals_without_urgency_field(dirs):
     q, r, a = dirs
     scoring.db.angles_rows = [dict(ANGLE_ROW)]
     scoring.prepare()
-    packet_path = q / "TST.json"
+    packet_path = _qfile(q)
     packet = json.loads(packet_path.read_text())
     for s in packet["signals"]:
         s.pop("urgency", None)
@@ -320,7 +334,7 @@ def test_commit_handles_packet_missing_stacking_bonus_key(dirs):
     q, r, a = dirs
     scoring.db.angles_rows = [dict(ANGLE_ROW)]
     scoring.prepare()
-    packet_path = q / "TST.json"
+    packet_path = _qfile(q)
     packet = json.loads(packet_path.read_text())
     del packet["base_score"]["stacking_bonus"]
     packet_path.write_text(json.dumps(packet))
@@ -424,7 +438,7 @@ def test_prepare_pre_gates_low_base_and_writes_synthetic_result(dirs, monkeypatc
     written, gated = scoring.prepare()  # TST base = 15 (one E1), hard signal present
     assert written == []
     assert gated == [{"ticker": "TST", "total": 15, "reason": "base_below_reach"}]
-    assert (q / "TST.json").exists()  # packet still written for commit
+    assert _qfile(q).exists()  # packet still written for commit
     result = json.loads((r / "TST.json").read_text())
     assert result["pregate"] == "base_below_reach"
 
