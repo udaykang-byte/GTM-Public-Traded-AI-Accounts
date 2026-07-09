@@ -14,7 +14,9 @@
       "Bash(git log:*)",
       "Read(./**)",
       "Read(//Users/udaykang/AI_Public Traded/**)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Write(./data/scoring_results/**)",
+      "Write(//Users/udaykang/AI_Public Traded/data/scoring_results/**)"
     ],
     "deny": [
       "Read(./.env)",
