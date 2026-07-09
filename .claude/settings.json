@@ -16,7 +16,9 @@
       "Read(//Users/udaykang/AI_Public Traded/**)",
       "Bash(cat:*)",
       "Write(./data/scoring_results/**)",
-      "Write(//Users/udaykang/AI_Public Traded/data/scoring_results/**)"
+      "Write(//Users/udaykang/AI_Public Traded/data/scoring_results/**)",
+      "Write(./data/message_results/**)",
+      "Write(//Users/udaykang/AI_Public Traded/data/message_results/**)"
     ],
     "deny": [
       "Read(./.env)",
