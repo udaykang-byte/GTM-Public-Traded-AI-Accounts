@@ -240,7 +240,7 @@ def test_outcome_records_event_and_advances_status(outcomes_db, capsys):
 
 
 def test_outcome_rejects_invalid_date(outcomes_db):
-    with pytest.raises(Exception):
+    with pytest.raises(typer.BadParameter):
         cli.outcome(message_id=1, event="sent", date="not-a-date", note="", csv=None, ticker=None, contact=None)
     assert outcomes_db.events == []
 

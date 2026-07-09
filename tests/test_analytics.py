@@ -224,3 +224,42 @@ def test_render_distinguishes_no_companies_from_missing_status_changed_at(monkey
     out = capsys.readouterr().out
     assert "not populated yet" in out
     assert "no companies" not in out
+
+
+class FakeDBWithOutcomes:
+    """Enough sent events to clear min_sends_for_attribution, so render()
+    hits the outcome-funnel table (and its north-star band callout in the
+    title) instead of the insufficient-data guard."""
+
+    def get_companies(self, status=None, tickers=None, limit=None):
+        return []
+
+    def all_messages(self):
+        return {1: [
+            {"id": i, "archetype": "observation", "angle_family": "funding", "service": "ai_outreach"}
+            for i in range(1, 13)
+        ]}
+
+    def all_message_events(self):
+        events = [{"message_id": i, "event": "sent"} for i in range(1, 13)]  # 12 sent
+        events += [{"message_id": 1, "event": "replied"},
+                   {"message_id": 1, "event": "positive_reply"}]  # 1/12 = 8.3% -> "good"
+        return events
+
+
+def test_render_north_star_band_callout_survives_rich_markup(monkeypatch, capsys):
+    """Regression: the callout was originally wrapped in square brackets,
+    which Rich parses as a markup tag in a Table title and silently drops —
+    the whole north-star line vanished from the output."""
+    from rich.console import Console
+
+    monkeypatch.setattr(analytics, "db", FakeDBWithOutcomes())
+    monkeypatch.setattr(analytics, "SETTINGS", {"analytics": {
+        "min_sends_for_attribution": 10,
+        "benchmarks": {"positive_reply_rate": {"poor": 0.01, "avg": 0.03, "good": 0.08}},
+    }})
+    analytics.render(Console())
+    # rich wraps long table titles at the table's width — collapse all
+    # whitespace so the assertion is layout-independent
+    out = " ".join(capsys.readouterr().out.split())
+    assert "north star: positive reply rate — benchmark band: good" in out

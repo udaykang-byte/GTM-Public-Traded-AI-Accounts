@@ -210,7 +210,10 @@ def render(console) -> None:
         )
     else:
         band = benchmark_band(funnel["positive_reply_rate"], bands) if bands else None
-        band_note = f" [north star: positive reply rate — benchmark band: {band}]" if band else ""
+        # parens, not square brackets — Rich parses [..] in a Table title as a
+        # markup tag and silently drops the whole callout (same bug class as
+        # cli.py's "(no status change)" suffix)
+        band_note = f" (north star: positive reply rate — benchmark band: {band})" if band else ""
         out_table = Table(title=f"Outcome funnel{band_note}")
         out_table.add_column("stage")
         out_table.add_column("count", justify="right")

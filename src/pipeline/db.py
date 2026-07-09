@@ -75,13 +75,18 @@ def delete_new_companies(ciks: list[int]) -> int:
 
 
 def set_status(cik: int, status: Status | str, profile: str | None = None, tier: str | None = None) -> None:
-    # v3 phase 4: stamp status_changed_at on every transition so analytics can
-    # compute time-in-stage. Pre-v3 rows fall back to a schema.sql backfill
-    # from updated_at (see analytics.py — labelled "approximate" there).
-    patch: dict = {
-        "status": status.value if isinstance(status, Status) else status,
-        "status_changed_at": datetime.now(timezone.utc).isoformat(),
-    }
+    new_status = status.value if isinstance(status, Status) else status
+    patch: dict = {"status": new_status}
+    # v3 phase 4: stamp status_changed_at only on a REAL transition so
+    # analytics can compute time-in-stage. Callers re-assert an unchanged
+    # status routinely (e.g. the two-pass enrich sets 'enriched' after edgar
+    # AND after parallel) — an unconditional stamp would reset dwell time on
+    # every no-op write. Pre-v3 rows fall back to a schema.sql backfill from
+    # updated_at (see analytics.py — labelled "approximate" there).
+    rows = client().table("companies").select("status").eq("cik", cik).limit(1).execute().data
+    current = rows[0]["status"] if rows else None
+    if new_status != current:
+        patch["status_changed_at"] = datetime.now(timezone.utc).isoformat()
     if profile is not None:
         patch["profile"] = profile
     if tier is not None:
