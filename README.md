@@ -1,13 +1,13 @@
-# AIPT — AI-Readiness Pipeline for Public Micro-Caps
+# GTM(Public Traded) — AI-Readiness Pipeline for Public Micro-Caps
 
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-brightgreen)
 
-AIPT finds US-listed micro-cap companies (Fintech, Edtech, Healthcare, SaaS) that show
+This orchestrator finds US-listed micro-cap companies (Fintech, Edtech, Healthcare, SaaS) that show
 public evidence they need AI services, scores that evidence with cited reasoning, and
 surfaces decision-maker contacts — turning SEC filings and web research into a ranked,
-exportable account list for [martechs.io](https://martechs.io).
+exportable account list.
 
 Every company moves through a simple funnel:
 
