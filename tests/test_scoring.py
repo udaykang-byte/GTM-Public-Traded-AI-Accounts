@@ -63,6 +63,9 @@ def dirs(tmp_path, monkeypatch):
     # pre-gate off by default so these tests exercise the LLM scoring path
     # regardless of live settings.yaml; the pre-gate tests re-enable it
     monkeypatch.setitem(scoring.SETTINGS.setdefault("scoring", {}), "pre_gate", {"enabled": False})
+    # median enforcement off by default (band 0) so single-shot commits pass;
+    # the median-of-3 tests re-enable it
+    monkeypatch.setitem(scoring.SETTINGS["scoring"], "median_band", 0)
     return q, r, a
 
 
@@ -458,3 +461,113 @@ def test_commit_of_pregated_result_labels_model_and_disqualifies(dirs, monkeypat
 def test_commit_of_llm_result_keeps_model_label(dirs):
     _run_commit(dirs, [dict(ANGLE_ROW)], make_verdict())
     assert scoring.db.scores[-1]["model"] == "claude-code/haiku-subagent"
+
+
+# --- packet slimming: quotes truncated, raw decay inputs stripped (lean path) ---
+
+def test_prepare_truncates_long_evidence_quotes(dirs):
+    q, r, a = dirs
+    long_quote = "artificial intelligence " * 40  # ~960 chars
+    scoring.db.all_signals = lambda: {1: [{**SIGNAL, "evidence_quote": long_quote}]}
+    scoring.prepare()
+    packet = json.loads(_qfile(q).read_text())
+    quote = packet["signals"][0]["evidence_quote"]
+    assert len(quote) <= scoring.MAX_QUOTE_CHARS + 1  # +1 for the ellipsis
+    assert quote.endswith("…")
+
+
+def test_prepare_keeps_short_quotes_verbatim(dirs):
+    q, r, a = dirs
+    scoring.db.all_signals = lambda: {1: [{**SIGNAL, "evidence_quote": "short quote"}]}
+    scoring.prepare()
+    packet = json.loads(_qfile(q).read_text())
+    assert packet["signals"][0]["evidence_quote"] == "short quote"
+
+
+def test_prepare_strips_raw_weight_and_observed_at(dirs):
+    """The scorer is told to use effective_weight/age_days; raw decay inputs
+    are packet bloat. Stripping happens after base_score is computed."""
+    q, r, a = dirs
+    scoring.prepare()
+    packet = json.loads(_qfile(q).read_text())
+    for s in packet["signals"]:
+        assert "weight" not in s and "observed_at" not in s
+        assert "effective_weight" in s and "age_days" in s
+    assert packet["base_score"]["total"] > 0  # computed before the strip
+
+
+# --- median-of-3 enforcement: commit() codifies the borderline rule ---
+
+def _median_on(monkeypatch, band=8):
+    monkeypatch.setitem(scoring.SETTINGS["scoring"], "median_band", band)
+
+
+def test_commit_holds_borderline_single_shot_verdict(dirs, monkeypatch):
+    q, r, a = dirs
+    _median_on(monkeypatch)
+    # total 66 -> within ±8 of threshold 65 -> must not commit single-shot
+    v = make_verdict(intent=20, capability_gap=16, timing=15, commercial_fit=15)
+    scoring.db.angles_rows = [dict(ANGLE_ROW)]
+    scoring.prepare()
+    (r / "TST.json").write_text(json.dumps(v))
+    summary = scoring.commit(run_id="t")
+    assert any("TST" in item for item in summary["median_pending"])
+    assert scoring.db.scores == [] and scoring.db.statuses == []
+    assert (r / "TST.json").exists()  # left in place for the median pass
+    assert _qfile(q).exists()  # packet stays queued for the replicates
+
+
+def test_commit_settles_borderline_with_median_of_runs(dirs, monkeypatch):
+    q, r, a = dirs
+    _median_on(monkeypatch)
+    scoring.db.angles_rows = [dict(ANGLE_ROW)]
+    scoring.prepare()
+    totals = {  # medians: 60 / 66 / 72 -> median total 66 -> qualified
+        "run1": make_verdict(intent=20, capability_gap=15, timing=15, commercial_fit=10),
+        "run2": make_verdict(intent=20, capability_gap=16, timing=15, commercial_fit=15),
+        "run3": make_verdict(intent=25, capability_gap=17, timing=15, commercial_fit=15),
+    }
+    for suffix, v in totals.items():
+        (r / f"TST.{suffix}.json").write_text(json.dumps(v))
+    summary = scoring.commit(run_id="t")
+    assert [x["ticker"] for x in summary["qualified"]] == ["TST"]
+    assert [x["total"] for x in summary["qualified"]] == [66]
+    row = scoring.db.scores[-1]
+    assert row["total"] == 66
+    assert row["model"] == "claude-code/haiku-subagent-median3"
+    assert not list(r.glob("*.json"))  # all run files archived
+    run_dir = a / "t"
+    assert (run_dir / "TST.run1.json").exists()
+
+
+def test_commit_holds_incomplete_median_runs(dirs, monkeypatch):
+    q, r, a = dirs
+    _median_on(monkeypatch)
+    scoring.db.angles_rows = [dict(ANGLE_ROW)]
+    scoring.prepare()
+    (r / "TST.run1.json").write_text(json.dumps(make_verdict()))
+    (r / "TST.run2.json").write_text(json.dumps(make_verdict()))
+    summary = scoring.commit(run_id="t")
+    assert any("TST" in item and "2/3" in item for item in summary["median_pending"])
+    assert scoring.db.scores == []
+    assert (r / "TST.run1.json").exists() and (r / "TST.run2.json").exists()
+
+
+def test_commit_non_borderline_single_shot_commits_normally(dirs, monkeypatch):
+    _median_on(monkeypatch)
+    # default make_verdict total 75 -> outside ±8 of 65
+    summary = _run_commit(dirs, [dict(ANGLE_ROW)], make_verdict())
+    assert [x["ticker"] for x in summary["qualified"]] == ["TST"]
+    assert summary["median_pending"] == []
+
+
+def test_commit_pregate_verdict_exempt_from_median(dirs, monkeypatch):
+    """Deterministic pre-gate verdicts have no jitter — never held for median,
+    even when their synthetic total lands inside the band."""
+    q, r, a = dirs
+    _median_on(monkeypatch, band=60)  # absurd band so total 15 is 'borderline'
+    monkeypatch.setitem(scoring.SETTINGS["scoring"], "pre_gate", PRE_GATE_ON)
+    scoring.prepare()
+    summary = scoring.commit(run_id="t")
+    assert summary["median_pending"] == []
+    assert [x["ticker"] for x in summary["disqualified"]] == ["TST"]

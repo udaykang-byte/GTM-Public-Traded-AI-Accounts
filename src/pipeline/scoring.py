@@ -11,6 +11,7 @@ Packets carry active outreach angles; commit enforces the angle-required gate.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 from datetime import date, datetime
@@ -26,6 +27,14 @@ from pipeline.models import ScoreVerdict, Status
 # dated event signals lose relevance: full weight while fresh, linear decay to
 # a floor at the collection-window edge (knobs in config scoring.recency)
 DECAY_WINDOW_DAYS = {"E3": 365, "E4": 365, "E7": 730, "P3": 548}
+
+# packets carry a citable snippet, not the filing paragraph — quotes past this
+# length are token bloat the scorer never needs (rubric asks for citations, and
+# a 200-char snippet is plenty to quote from)
+MAX_QUOTE_CHARS = 200
+
+# replicate results from the median-of-3 pass: <output_path>.run1.json etc.
+_RUN_SUFFIX_RE = re.compile(r"\.run\d+$", re.IGNORECASE)
 
 
 def _signal_age_days(s: dict) -> int | None:
@@ -322,10 +331,22 @@ def prepare(
             s["urgency"] = urgency_of(s["age_days"])
         derived = _derived_cohort_signal(company, slim_signals, peers, signals_by_cik)
         if derived:
-            # packet uniformity: the synthetic E8 carries the same urgency key
-            # as collected signals (undated -> None)
-            derived["urgency"] = urgency_of(_signal_age_days(derived))
+            # packet uniformity: the synthetic E8 carries the same urgency/
+            # age/effective_weight keys as collected signals (undated -> None)
+            derived["age_days"] = _signal_age_days(derived)
+            derived["effective_weight"] = effective_weight(derived)
+            derived["urgency"] = urgency_of(derived["age_days"])
             slim_signals.append(derived)
+        base_score = base_components(slim_signals)
+        # after the base math is done, the raw decay inputs are packet bloat:
+        # the scorer is told to use effective_weight/age_days, and it only
+        # needs a citable snippet of each quote, not the filing paragraph
+        for s in slim_signals:
+            quote = s.get("evidence_quote")
+            if quote and len(quote) > MAX_QUOTE_CHARS:
+                s["evidence_quote"] = quote[:MAX_QUOTE_CHARS].rstrip() + "…"
+            s.pop("observed_at", None)
+            s.pop("weight", None)
         active_angles = [
             angles_mod.slim(a)
             for a in angles_by_cik.get(int(company["cik"]), [])
@@ -341,7 +362,7 @@ def prepare(
             },
             "signals": slim_signals,
             "angles": active_angles,
-            "base_score": base_components(slim_signals),
+            "base_score": base_score,
             "hard_signals_present": sorted(
                 {s["type"] for s in slim_signals}
                 & set(SETTINGS.get("scoring", {}).get("hard_signals", []))
@@ -381,7 +402,9 @@ def commit(run_id: str | None = None) -> dict:
     require_angle = bool(cfg.get("require_angle", True))
     run_id = run_id or time.strftime("%Y%m%d-%H%M%S")
 
-    summary = {"qualified": [], "review": [], "disqualified": [], "invalid": [], "orphan": [], "kept": []}
+    band = float(cfg.get("median_band", 8))
+
+    summary = {"qualified": [], "review": [], "disqualified": [], "invalid": [], "orphan": [], "kept": [], "median_pending": []}
     archive = ARCHIVE_DIR / run_id
     archive.mkdir(parents=True, exist_ok=True)
 
@@ -389,8 +412,20 @@ def commit(run_id: str | None = None) -> dict:
     if shared_files:
         shutil.copy2(shared_files[-1], archive / "_shared.json")
 
-    for result_file in sorted(RESULTS_DIR.glob("*.json")):
-        ticker = result_file.stem.upper()
+    # median-of-3 is code-enforced, not skill prose: a single-shot verdict
+    # within ±median_band of the qualify bar is HELD (files left in place)
+    # until 3 replicate results exist (TICKER.run1/.run2/.run3.json); commit
+    # then settles on the median total itself. Haiku verdicts jitter ±10-15,
+    # so a borderline single shot is never trusted. Reply rates > volume.
+    run_results: dict[str, list[Path]] = {}
+    single_results: dict[str, Path] = {}
+    for f in sorted(RESULTS_DIR.glob("*.json")):
+        if _RUN_SUFFIX_RE.search(f.stem):
+            run_results.setdefault(_RUN_SUFFIX_RE.sub("", f.stem).upper(), []).append(f)
+        else:
+            single_results[f.stem.upper()] = f
+
+    for ticker in sorted(set(single_results) | set(run_results)):
         # queue filenames are run-stamped (TICKER-<stamp>.json) to defeat
         # read-priming; newest stamp wins, bare TICKER.json accepted as legacy
         candidates = sorted(QUEUE_DIR.glob(f"{ticker}-*.json"))
@@ -401,13 +436,39 @@ def commit(run_id: str | None = None) -> dict:
             summary["orphan"].append(ticker)
             continue
         packet_file = candidates[-1]
-        try:
-            raw = json.loads(result_file.read_text())
-            verdict = ScoreVerdict.model_validate(raw)
-        except (ValidationError, json.JSONDecodeError) as exc:
-            summary["invalid"].append(f"{ticker}: {str(exc)[:200]}")
-            continue
-        is_pregate = isinstance(raw, dict) and bool(raw.get("pregate"))
+
+        replicates = run_results.get(ticker, [])
+        single_file = single_results.get(ticker)
+        if replicates:
+            if len(replicates) < 3:
+                summary["median_pending"].append(f"{ticker}: {len(replicates)}/3 runs")
+                continue
+            parsed = []
+            for f in replicates:
+                try:
+                    parsed.append(ScoreVerdict.model_validate(json.loads(f.read_text())))
+                except (ValidationError, json.JSONDecodeError) as exc:
+                    summary["invalid"].append(f"{ticker}: {f.name}: {str(exc)[:200]}")
+            if len(parsed) < 3:
+                continue  # bad replicate reported above — re-spawn it, then re-commit
+            parsed.sort(key=lambda v: v.total)
+            verdict = parsed[len(parsed) // 2]
+            is_pregate = False
+            model_label = "claude-code/haiku-subagent-median3"
+            result_files = replicates + ([single_file] if single_file else [])
+        else:
+            try:
+                raw = json.loads(single_file.read_text())
+                verdict = ScoreVerdict.model_validate(raw)
+            except (ValidationError, json.JSONDecodeError) as exc:
+                summary["invalid"].append(f"{ticker}: {str(exc)[:200]}")
+                continue
+            is_pregate = isinstance(raw, dict) and bool(raw.get("pregate"))
+            if band > 0 and not is_pregate and abs(verdict.total - threshold) <= band:
+                summary["median_pending"].append(ticker)
+                continue
+            model_label = "deterministic/pre-gate" if is_pregate else "claude-code/haiku-subagent"
+            result_files = [single_file]
 
         packet = json.loads(packet_file.read_text())
         company = db.get_company_by_ticker(ticker)
@@ -471,7 +532,7 @@ def commit(run_id: str | None = None) -> dict:
             "gate_reason": gate_reason,
             "tier": tier,
             "priority": priority,
-            "model": "deterministic/pre-gate" if is_pregate else "claude-code/haiku-subagent",
+            "model": model_label,
         })
 
         db.set_status(company["cik"], new_status, profile=verdict.profile.value, tier=tier)
@@ -480,7 +541,8 @@ def commit(run_id: str | None = None) -> dict:
             item["gate_reason"] = gate_reason
         summary[bucket].append(item)
 
-        shutil.move(str(result_file), archive / result_file.name)
+        for f in result_files:
+            shutil.move(str(f), archive / f.name)
         shutil.move(str(packet_file), archive / f"packet_{ticker}.json")
 
     if not pending_queue():  # queue fully drained — next prepare rewrites shared

@@ -573,6 +573,11 @@ def score(
             console.print(f"[red]invalid results (fix + rerun): {summary['invalid']}[/red]")
         if summary["orphan"]:
             console.print(f"[yellow]orphan results (no packet/company): {summary['orphan']}[/yellow]")
+        if summary.get("median_pending"):
+            console.print(
+                "[yellow]median-of-3 pending (borderline verdicts held; spawn 3 scorer "
+                "replicates per ticker writing <output_path>.run1/.run2/.run3.json, then "
+                f"re-run score --commit): {', '.join(summary['median_pending'])}[/yellow]")
         return
 
     console.print("Use --prepare or --commit (v1), or --provider openrouter (v2).")

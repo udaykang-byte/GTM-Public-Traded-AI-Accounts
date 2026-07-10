@@ -576,3 +576,65 @@ def test_banned_words_honors_settings_override(monkeypatch, packet):
     # a word from the ORIGINAL default list is no longer banned once overridden
     hard2, _ = _qa(seq_with_step(3, body=BODY3.replace("staffed", "streamlined")), packet)
     assert not any("banned word 'streamline'" in h for h in hard2)
+
+
+# --- packet slimming: analyst-voice reasoning dropped, service_fit collapsed ---
+
+def test_prepare_packet_verdict_is_slim(dirs):
+    """verdict.reasoning is analyst voice the copywriter is forbidden to use
+    (filing forms, dates, instrument names) — dead weight that seeds QA
+    retries. service_fit collapses to the recommended service's entry so the
+    packet carries one rationale, not three."""
+    q, r, a = dirs
+    messages.prepare()
+    v = anne_packet(q)["verdict"]
+    assert "reasoning" not in v
+    assert [f["service"] for f in v["service_fit"]] == ["ai_outreach"]
+    assert v["why_now"] == "fresh raise"
+    assert v["primary_angle"]["fingerprint"] == FP
+    bob = json.loads((q / "TST__bob-roy.json").read_text())
+    assert [f["service"] for f in bob["verdict"]["service_fit"]] == ["ai_consultation"]
+
+
+def test_qa_service_gate_now_enforces_recommended_service(dirs):
+    """With service_fit collapsed, a draft on any non-recommended service
+    hard-fails packet consistency — matching the packet instructions."""
+    q, r, a = dirs
+    messages.prepare()
+    packet = anne_packet(q)
+    hard, _ = _qa(make_seq(service="ai_marketing"), packet)  # was in full fits
+    assert any("service" in h for h in hard)
+
+
+# --- distilled framework embed: comments + embed:skip sections never ship ---
+
+def test_shared_framework_is_distilled(dirs):
+    """_shared.json embeds a distilled framework: maintainer HTML comments and
+    <!-- embed:skip --> sections (Business Context interview, QA checklist —
+    both duplicated by services_catalog / hard_rules / qa_check) are stripped;
+    the copy rules the copywriter actually needs survive."""
+    q, r, a = dirs
+    messages.prepare()
+    fw = json.loads((q / "_shared.json").read_text())["copywriter_framework"]
+    assert "<!--" not in fw
+    assert "Business Context" not in fw          # interview framing skipped
+    assert "QA Checklist" not in fw              # enforced by qa_check anyway
+    # load-bearing sections survive verbatim
+    for kept in ("SPARK", "Signal → Pain → Fix", "Voice", "value-prop line",
+                 "The 4-Step Sequence", "Archetypes"):
+        assert kept in fw, f"missing section: {kept}"
+    # the whole point: materially smaller than the ~21KB source doc
+    assert len(fw) < 17000
+
+
+def test_distill_framework_strips_marked_spans_and_comments():
+    text = (
+        "# Title\n\n<!-- maintainer note -->\n\nkeep me\n\n"
+        "<!-- embed:skip -->\n## Interview\nsecret setup\n<!-- /embed:skip -->\n\n"
+        "also keep\n"
+    )
+    out = messages._distill_framework(text)
+    assert "keep me" in out and "also keep" in out
+    assert "maintainer note" not in out
+    assert "Interview" not in out and "secret setup" not in out
+    assert "\n\n\n" not in out

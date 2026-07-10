@@ -2,9 +2,16 @@
 
 <!--
   WHAT THIS IS: the copywriting framework the message-generation subagents follow.
-  `pipeline messages --prepare` embeds this file verbatim into
+  `pipeline messages --prepare` embeds a DISTILLED version of this file into
   data/message_queue/_shared.json; every /outreach Haiku subagent reads it once
   per batch and applies it to each packet.
+
+  DISTILLED = these HTML comments and every span wrapped in "embed:skip" /
+  "/embed:skip" comment markers are stripped at embed time
+  (messages.py::_distill_framework). The shared file stays resident in the
+  subagent's context on every turn, so skipped sections save tokens on every
+  packet. Skip a section only when its substance already reaches the subagent
+  another way (services_catalog, hard_rules) or is enforced in code (qa_check).
 
   EDIT LIKE settings.yaml: voice and copy decisions here are Uday's, same as
   thresholds. Adapted 2026-07-07 from the generic outbound-copywriter template;
@@ -17,6 +24,7 @@
   to match.
 -->
 
+<!-- embed:skip -->
 ## Business Context (customization interview — filled 2026-07-07)
 
 **1. What do we sell?**
@@ -89,6 +97,8 @@ the softest tier accordingly.
 **14. Current positive reply rate.**
 No baseline — campaign 1 sets it. The optimization target is reply and meeting
 rate, not volume.
+
+<!-- /embed:skip -->
 
 ---
 
@@ -351,6 +361,7 @@ more than one CTA per email.
 
 ---
 
+<!-- embed:skip -->
 ## QA Checklist (the pipeline enforces most of this deterministically)
 
 - Subject: 3–5 words, all lowercase, no special characters — step 1 only.
@@ -366,3 +377,4 @@ more than one CTA per email.
   `[bracketed placeholders]` — fully rendered text with the real first name and
   real company name.
 - Every fact relied on traceable to the packet — but expressed as pain, not citation.
+<!-- /embed:skip -->

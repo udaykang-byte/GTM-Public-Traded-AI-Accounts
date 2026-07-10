@@ -50,25 +50,27 @@ Validates every result against the schema (invalid ones are reported — re-run 
 
 **Rescoring the review band**: After running `/enrich --source deep`, prepare packets with `score --prepare --statuses scored` to re-score companies in the review band with angles.
 
-## Median-of-3 for borderline verdicts (codified)
+## Median-of-3 for borderline verdicts (code-enforced)
 
-Haiku verdicts jitter ±10–15 points. After `--commit`, any company whose total
-lands within ±`scoring.median_band` (config, default 8) of
-`scoring.qualify_threshold` is **borderline** and must be settled by median-of-3:
+Haiku verdicts jitter ±10–15 points. `--commit` itself enforces the borderline
+rule — you cannot skip it: any single-shot verdict whose total lands within
+±`scoring.median_band` (config, default 8) of `scoring.qualify_threshold` is
+**held** (reported as `median-of-3 pending`; the result and packet stay in
+place — nothing is written to the DB). To settle a held ticker:
 
-1. Collect ALL borderline tickers from the commit summary (qualified or review).
-2. Re-prepare their packets (`score --prepare --statuses scored` — or
-   `--statuses scored,qualified` if a borderline one qualified).
-3. Spawn **3 scorer subagents in parallel; each replicate scores ALL borderline
+1. Spawn **3 scorer subagents in parallel; each replicate scores ALL pending
    packets** (independence comes from separate agents, amortization from
-   batching). Tell each to write to `output_path` with a distinct suffix
-   (`.run1.json`, `.run2.json`, `.run3.json`).
-4. For each ticker, keep the verdict file whose total is the median of the
-   three, rename it to the packet's real `output_path`, delete the other two,
-   then `score --commit`.
+   batching). The packets are still in `data/scoring_queue/` — no re-prepare
+   needed. Tell each replicate to write to the packet's `output_path` with a
+   distinct suffix (`.run1.json`, `.run2.json`, `.run3.json`).
+2. Re-run `score --commit`. It finds the three replicate files, **computes the
+   median total itself**, commits that verdict (labeled
+   `claude-code/haiku-subagent-median3`), and archives all replicate files.
+   Fewer than 3 replicates → still held; an invalid replicate is reported —
+   re-spawn just that one.
 
 Never re-roll to pass, never cherry-pick the highest — the median is the
-verdict. Reply rates > volume.
+verdict, and commit computes it deterministically. Reply rates > volume.
 
 ## Step 4 — report
 

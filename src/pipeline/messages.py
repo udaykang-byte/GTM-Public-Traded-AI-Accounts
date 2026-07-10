@@ -136,9 +136,24 @@ def _cfg() -> dict:
     return SETTINGS.get("messages", {})
 
 
+# the framework doc stays verbose for humans; what ships to the subagents is
+# distilled: <!-- embed:skip --> ... <!-- /embed:skip --> spans (interview
+# framing, QA checklist — duplicated by services_catalog/hard_rules/qa_check)
+# and all maintainer comments are stripped. The shared file is re-read every
+# copywriter turn, so every KB here is paid ~6x per invocation.
+_EMBED_SKIP_RE = re.compile(r"<!--\s*embed:skip\s*-->.*?<!--\s*/embed:skip\s*-->", re.DOTALL)
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def _distill_framework(text: str) -> str:
+    text = _EMBED_SKIP_RE.sub("", text)
+    text = _HTML_COMMENT_RE.sub("", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
+
+
 def _framework_text() -> str:
     path = profile_file(_cfg().get("framework_file", "outbound_copywriter.md"))
-    return path.read_text()
+    return _distill_framework(path.read_text())
 
 
 def _pick_angle(score: dict, fresh: list[dict]) -> dict | None:
@@ -279,6 +294,7 @@ def prepare(
             output_path = (MSG_RESULTS_DIR / f"{name}.json").as_posix()
             persona = people_mod.match_persona(
                 contact.get("role_bucket") or "", contact.get("title") or "")
+            rec_service = _recommended_service(fits, contact.get("role_bucket") or "")
             packet = {
                 "ticker": company["ticker"],
                 "company": {
@@ -295,15 +311,19 @@ def prepare(
                     "has_linkedin": bool(contact.get("linkedin_url")),
                 },
                 "colleagues_also_messaged": colleagues,
+                # slim on purpose: scoring `reasoning` is analyst voice the
+                # copywriter is forbidden to use (filing forms, dates,
+                # instrument names) — shipping it only seeds QA retries; and
+                # only the recommended service's fit entry travels, so the QA
+                # gate enforces the "use recommended_service" instruction
                 "verdict": {
                     "profile": score.get("profile"),
                     "why_now": score.get("why_now"),
-                    "reasoning": score.get("reasoning"),
-                    "service_fit": fits,
+                    "service_fit": [f for f in fits if f.get("service") == rec_service],
                     "primary_angle": score.get("primary_angle"),
                     "angle_ranking": score.get("angle_ranking") or [],
                 },
-                "recommended_service": _recommended_service(fits, contact.get("role_bucket") or ""),
+                "recommended_service": rec_service,
                 "persona": ({
                     "committee_role": persona.get("committee_role"),
                     "seniority": persona.get("seniority"),

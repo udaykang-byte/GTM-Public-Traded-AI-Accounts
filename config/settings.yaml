@@ -71,7 +71,9 @@ scoring:
     max_llm_lift: 40
   # Median-of-3 band: a verdict total within +/- this of qualify_threshold is
   # borderline — score 3 independent replicates and commit the median; never
-  # re-roll to pass. Applied by the /score skill, read from here.
+  # re-roll to pass. Enforced by `score --commit` itself: borderline single-shot
+  # verdicts are held until .run1/.run2/.run3 replicate results exist, then
+  # commit settles on the median. 0 disables the hold (tests only).
   median_band: 8
   # Dated event signals (E3/E4/E7/P3) keep full weight for `full_days`, then
   # decay linearly to `floor` x weight at their collection-window edge.
