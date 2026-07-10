@@ -246,7 +246,11 @@ Good: "Are you seeing this too?" · "Worth sending over the two-page gap map? No
 pitch attached." · "Would it be a terrible idea to share how we'd sequence this?"
 Bad: "Let's hop on a quick 15-minute call." · "Are you free Thursday?"
 
-**Length**: 60–120 words for step 1. Hard max 150 anywhere. Mobile-first.
+**Length**: 50–90 words for step 1; extend toward the 125 hard max only when
+the personalization earns it. Mobile-first. Get there with the **3-pass cut**:
+1. Delete fluff — greetings, "I wanted to", "I was wondering", hedging.
+2. Compress — clauses become periods: "we built a platform that does X" → "we do X".
+3. Cut adjectives — keep only the specific data; delete "great", "powerful".
 
 ---
 
@@ -293,6 +297,11 @@ ideas are truly specific — that's why it works). Otherwise walk down the table
 Each step has ONE job. Never "just bumping this." Steps 2–4 have `subject: null`
 (same thread). Day offsets are stamped by the pipeline — don't compute them.
 
+**Rotate the offer axis.** Every value prop is one of: save time, make money,
+save money. Each step leads with a DIFFERENT axis — if they didn't reply to
+step 1's angle, that angle didn't resonate; repeating it just re-sends the
+same email. Pick the axis that fits each step's frame, don't force all three.
+
 **Step 1 — Opener (day 0).** SPARK, one archetype, 60–120 words. Lead with the
 packet's primary angle. One question CTA (`confirm_problem`). No links.
 
@@ -310,11 +319,11 @@ read, a one-page teardown, a single sharp question about how they're staffing it
 future re-open:
 
 ```
-Not trying to be a pest — checking one last time.
+Not trying to be a pest. Checking one last time.
 
-1. All set — not something you need help with
-2. Timing's off — circle back in a few months
-3. Wrong person — point me to who owns this?
+1. All set, not something you need help with
+2. Timing's off, circle back in a few months
+3. Wrong person, point me to who owns this?
 
 No worries either way.
 
@@ -335,8 +344,11 @@ the deal.
 - Plain text. No bold, no bullets in emails, no links in step 1, no images.
 - Sign-off: first name only — "Uday". No signature block, no title, no company tagline.
 - Channel-neutral phrasing: never "reply to this email" (some contacts get this via LinkedIn).
+- Claims about what "most companies" do are framed as personal observation —
+  "From my experience…", "what we see at your size…" — never stated as market fact.
 - Read it aloud. If it sounds like marketing, rewrite it.
-- **Anti-robot rules** (batch-1 lesson): at most 2 em-dashes per email. Never
+- **Anti-robot rules** (batch-1 lesson): NO em-dashes anywhere — a single "—"
+  hard-fails QA (2026-07-10; the most reliable AI tell). Periods or commas. Never
   "that kind of X usually/typically comes with/means/signals" — analyst voice.
   No consulting jargon: "execution window", "first-100-days agenda", "capability
   gap", "GTM velocity", "go-to-market motion". No day-precise dates or filing
@@ -365,14 +377,14 @@ more than one CTA per email.
 ## QA Checklist (the pipeline enforces most of this deterministically)
 
 - Subject: 3–5 words, all lowercase, no special characters — step 1 only.
-- Step 1 body 60–120 words; any body over 150 fails.
+- Step 1 body 50–90 words; any body over 125 fails.
 - First line specific to this prospect (not sendable to 1,000 people).
 - Exactly one CTA per email, and it's a question. No meeting ask in steps 1–3.
 - Every sentence its own paragraph. 3:1 you:we language ratio.
 - No filing form names or calendar dates anywhere in the copy (hard fail).
 - Value prop present: the email says what we do and what changes for them.
 - Pattern proof present in steps 1–2.
-- At most 2 em-dashes per email; no analyst-voice constructions.
+- Zero em-dashes (hard fail); no analyst-voice constructions.
 - No banned words. No links in step 1. No `{{merge_variables}}` or
   `[bracketed placeholders]` — fully rendered text with the real first name and
   real company name.

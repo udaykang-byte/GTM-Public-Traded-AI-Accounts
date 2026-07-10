@@ -169,6 +169,21 @@ def _pick_angle(score: dict, fresh: list[dict]) -> dict | None:
     return fresh[0] if fresh else None
 
 
+def _angle_summary(slim: dict) -> str:
+    """One human-readable line per angle so the copywriter can weigh angles
+    at a glance instead of re-deriving them from the structured fields.
+    Raw material for diagnosis only — headlines may contain filing language
+    the copy itself must never use."""
+    age = slim.get("age_days")
+    strength = slim.get("strength")
+    bits = [b for b in (
+        f"{age}d old" if age is not None else None,
+        f"strength {strength:.2f}" if strength is not None else None,
+    ) if b]
+    meta = f" ({', '.join(bits)})" if bits else ""
+    return f"{slim.get('family')}: {slim.get('headline')}{meta}"
+
+
 def _recommended_service(fits: list[dict], role_bucket: str) -> str:
     """First service (priority order) whose target roles include this contact's
     role — the role-aware part of per-contact packets. Consults config/
@@ -254,7 +269,8 @@ def prepare(
         db.mark_angles_stale(stale_ids)
 
     written: list[str] = []
-    skips: dict[str, list[str]] = {"no_angle": [], "no_score": [], "no_contacts": [], "existing": []}
+    skips: dict[str, list[str]] = {"no_angle": [], "no_score": [], "no_contacts": [],
+                                   "no_channel": [], "existing": []}
     for company in companies:
         if len(written) >= cap:
             break
@@ -284,11 +300,17 @@ def prepare(
             if len(written) >= cap:
                 break
             name = f"{company['ticker']}__{_slug(contact['name'])}"
+            if not contact.get("email") and not contact.get("linkedin_url"):
+                # unreachable on every channel — a packet would burn a
+                # copywriter run on a sequence that can never be sent
+                skips["no_channel"].append(name)
+                continue
             if not force and (contact.get("id"), angle["fingerprint"]) in existing:
                 skips["existing"].append(name)
                 continue
             colleagues = [
-                {"name": c["name"], "title": c["title"]}
+                {"name": c["name"], "title": c["title"],
+                 "role_bucket": c.get("role_bucket") or ""}
                 for c in contacts if c.get("id") != contact.get("id")
             ]
             output_path = (MSG_RESULTS_DIR / f"{name}.json").as_posix()
@@ -311,6 +333,12 @@ def prepare(
                     "has_linkedin": bool(contact.get("linkedin_url")),
                 },
                 "colleagues_also_messaged": colleagues,
+                "diversity_note": (
+                    f"{len(colleagues)} colleague(s) at {company['name']} receive "
+                    f"sequences built on the SAME angle. Write this one through the "
+                    f"{contact.get('role_bucket') or contact['title']} lens: a different "
+                    "pain, a different subject line, no phrasing reused across colleagues."
+                ) if colleagues else None,
                 # slim on purpose: scoring `reasoning` is analyst voice the
                 # copywriter is forbidden to use (filing forms, dates,
                 # instrument names) — shipping it only seeds QA retries; and
@@ -331,7 +359,8 @@ def prepare(
                     "language": persona.get("language", {}),
                 } if persona else None),
                 "primary_angle_fingerprint": angle["fingerprint"],
-                "angles": [angles_mod.slim(a) for a in fresh],
+                "angles": [{**s, "summary": _angle_summary(s)}
+                           for s in (angles_mod.slim(a) for a in fresh)],
                 "shared_file": shared_path.as_posix(),
                 "output_path": output_path,
                 "instructions": (
@@ -518,8 +547,8 @@ def qa_check(seq: MessageSequence, packet: dict) -> tuple[list[str], list[str]]:
         m = FILING_SPEAK_RE.search(s.body)
         if m:
             warn.append(f"step {s.step} filing-speak ('{m.group(0)}')")
-        if s.step <= 3 and s.body.count("—") > 2:
-            warn.append(f"step {s.step} has {s.body.count('—')} em-dashes (want <=2)")
+        if "—" in text:
+            hard.append(f"step {s.step} contains an em dash — use a period or comma instead")
 
     for extra in cfg.get("banned_words_extra", []) or []:
         pat = _banned_pattern(extra)

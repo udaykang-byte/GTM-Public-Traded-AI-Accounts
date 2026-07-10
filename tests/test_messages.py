@@ -91,15 +91,15 @@ BODY1 = (
     "The uncomfortable part starts now: your board wants it turned into "
     "growth, and hiring reps eats half of it before your first new meeting "
     "gets booked.\n\n"
-    "Most software micro-caps in this spot put the money into headcount, "
-    "then wait out six months of ramp.\n\n"
-    "We build AI-run outbound instead — targeting, personalization, replies — "
-    "so your raise shows up as pipeline, not payroll.\n\n"
+    "From my experience, most software micro-caps in this spot put the money "
+    "into headcount, then wait out six months of ramp.\n\n"
+    "We build AI-run outbound instead: targeting, personalization, replies. "
+    "Your raise shows up as pipeline, not payroll.\n\n"
     "Worth a look at how that maps to Test Co?"
 )
 BODY2 = (
     "Put together a two-page gap map of where an outbound system would slot in "
-    "at Test Co — built from your own filings, not a template.\n\n"
+    "at Test Co, built from your own filings, not a template.\n\n"
     "Worth sending over? No pitch attached.\n\nUday"
 )
 BODY3 = (
@@ -107,10 +107,10 @@ BODY3 = (
     "owner is named.\n\nHow is that getting staffed internally?\n\nUday"
 )
 BODY4 = (
-    "Not trying to be a pest — checking one last time.\n\n"
-    "1. All set — not something you need help with\n"
-    "2. Timing's off — circle back in a few months\n"
-    "3. Wrong person — point me to who owns this?\n\n"
+    "Not trying to be a pest. Checking one last time.\n\n"
+    "1. All set, not something you need help with\n"
+    "2. Timing's off, circle back in a few months\n"
+    "3. Wrong person, point me to who owns this?\n\n"
     "No worries either way.\n\nUday"
 )
 
@@ -243,14 +243,20 @@ def test_step_four_cta_and_word_count_warnings(packet):
     assert any("step 1 body has" in w for w in warn)
 
 
-def test_analyst_voice_and_em_dash_warnings(packet):
+def test_analyst_voice_warns(packet):
     hard, warn = _qa(seq_with_step(
         3, body=BODY3.replace("One thing", "That kind of hire usually means one thing")), packet)
     assert hard == []
     assert any("analyst voice" in w for w in warn)
-    hard, warn = _qa(seq_with_step(3, body=BODY3 + "\n\nOne — two — three — dashes."), packet)
-    assert hard == []
-    assert any("em-dashes" in w for w in warn)
+
+
+def test_any_em_dash_hard_fails(packet):
+    """Campaign-copywriting rule (2026-07-10): no em dashes in copy, ever —
+    the single most reliable AI tell. Periods or commas instead."""
+    for step in (1, 2, 3, 4):
+        body = make_seq()["steps"][step - 1]["body"] + "\n\nOne — two?"
+        hard, _ = _qa(seq_with_step(step, body=body), packet)
+        assert any("em dash" in h for h in hard), (step, hard)
 
 
 # ---------- prepare ----------
@@ -269,7 +275,8 @@ def test_prepare_writes_one_packet_per_contact(dirs):
     packet = anne_packet(q)
     assert packet["contact"]["name"] == "Anne Smith"
     assert packet["contact"]["has_email"] is False and packet["contact"]["has_linkedin"] is True
-    assert packet["colleagues_also_messaged"] == [{"name": "Bob Roy", "title": "CEO"}]
+    assert packet["colleagues_also_messaged"] == [
+        {"name": "Bob Roy", "title": "CEO", "role_bucket": "CEO"}]
     assert packet["primary_angle_fingerprint"] == FP
     assert packet["angles"][0]["age_days"] == 20
     assert "Anne Smith" in packet["instructions"] and "CMO" in packet["instructions"]
@@ -434,7 +441,7 @@ def test_prepare_attaches_persona_block_for_cmo(dirs):
 
 
 CONTACT_UNRECOGNIZED = {"id": 21, "name": "Jamie Doe", "title": "Regional Facilities Manager",
-                        "role_bucket": "", "linkedin_url": None, "email": None}
+                        "role_bucket": "", "linkedin_url": None, "email": "jamie@test.co"}
 
 
 def test_prepare_persona_block_none_when_role_bucket_and_title_unrecognized(dirs):
@@ -638,3 +645,54 @@ def test_distill_framework_strips_marked_spans_and_comments():
     assert "maintainer note" not in out
     assert "Interview" not in out and "secret setup" not in out
     assert "\n\n\n" not in out
+
+
+# ---------- R11: no-channel skip ----------
+
+def test_prepare_skips_contact_with_no_email_and_no_linkedin(dirs):
+    q, r, a = dirs
+    messages.db.contacts_rows.append({"id": 13, "name": "Cara Ghost", "title": "CFO",
+                                      "role_bucket": "CFO", "linkedin_url": None, "email": None})
+    written, skips = messages.prepare()
+    assert "TST__cara-ghost" in skips["no_channel"]
+    assert not (q / "TST__cara-ghost.json").exists()
+    assert len(written) == 2  # the two reachable contacts still get packets
+
+
+def test_prepare_single_channel_contacts_not_skipped(dirs):
+    # CONTACT_CMO is linkedin-only, CONTACT_CEO email-only — both reachable
+    written, skips = messages.prepare()
+    assert skips["no_channel"] == []
+    assert len(written) == 2
+
+
+# ---------- R12: angle summaries + colleague diversity ----------
+
+def test_packet_angles_carry_one_line_summary(dirs):
+    q, _, _ = dirs
+    messages.prepare()
+    pkt = anne_packet(q)
+    assert pkt["angles"], "fixture should yield at least one fresh angle"
+    for a in pkt["angles"]:
+        assert isinstance(a.get("summary"), str) and a["summary"]
+        assert "\n" not in a["summary"]
+        assert a["family"] in a["summary"]
+
+
+def test_packet_colleagues_carry_role_bucket_and_diversity_note(dirs):
+    q, _, _ = dirs
+    messages.prepare()
+    pkt = anne_packet(q)
+    assert pkt["colleagues_also_messaged"] == [
+        {"name": "Bob Roy", "title": "CEO", "role_bucket": "CEO"}]
+    note = pkt["diversity_note"]
+    assert note and "same angle" in note.lower()
+    assert "CMO" in note  # differentiate through THIS contact's lens
+
+
+def test_packet_diversity_note_none_when_solo_contact(dirs):
+    q, _, _ = dirs
+    messages.db.contacts_rows = [dict(CONTACT_CMO)]
+    messages.prepare()
+    pkt = anne_packet(q)
+    assert pkt["diversity_note"] is None

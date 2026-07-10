@@ -171,10 +171,13 @@ messages:
   day_offsets: [0, 3, 8, 16]   # stamped by commit(); whatever the LLM wrote is ignored
   # case_study / benchmark stay off until martechs.io has citable proof points
   allowed_archetypes: [observation, creative_ideas, referral_ceiling, problem_solution, whole_offer]
+  # Tightened 2026-07-10 (campaign-copywriting skill adoption, Uday-approved):
+  # 50-90 target for step 1, 125 only when personalization earns it. The
+  # audit of the first 164 drafts showed a 92-word median — too long.
   word_count:
-    step1_min: 60
-    step1_max: 120
-    hard_max: 150              # any body above this fails QA outright
+    step1_min: 50
+    step1_max: 90
+    hard_max: 125              # any body above this fails QA outright
   you_we_ratio_min: 2.0        # prospect-focused vs self-focused language (warning)
   banned_words_extra: []       # appended to banned_words below
   framework_file: outbound_copywriter.md   # relative to config/; embedded in _shared.json
