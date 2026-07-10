@@ -66,11 +66,33 @@ def effective_weight(s: dict) -> float:
 # which component each signal type feeds (caps in config scoring.component_caps)
 COMPONENT_OF = {
     "E1": "intent", "E2": "intent", "P3": "intent", "P6": "intent",
-    "E6": "capability_gap", "P4": "capability_gap",
+    "E6": "capability_gap", "P4": "capability_gap", "E8": "capability_gap",
     "E3": "timing", "E4": "timing", "E7": "timing",
     "E5": "commercial_fit", "E9": "commercial_fit",
     "P1": "commercial_fit", "P2": "commercial_fit", "P5": "commercial_fit",
 }
+
+# Parallel-sourced hard signals are web research, not filings — they satisfy
+# the hard-signal gate only with a source URL and substantive detail. EDGAR
+# hard signals are filing-derived and exempt. (All 123 archived P1/P2/P3
+# already pass this floor; it guards future collector regressions.)
+HARD_EVIDENCE_TYPES = {"P1", "P2", "P3"}
+HARD_EVIDENCE_MIN_DETAIL = 40
+
+
+def hard_types_present(signals: list[dict], hard: set[str]) -> set[str]:
+    out = set()
+    for s in signals:
+        t = s.get("type")
+        if t not in hard:
+            continue
+        if t in HARD_EVIDENCE_TYPES and not (
+            s.get("evidence_url")
+            and len((s.get("detail") or "").strip()) >= HARD_EVIDENCE_MIN_DETAIL
+        ):
+            continue
+        out.add(t)
+    return out
 
 RUBRIC = """Score this company as a prospect for martechs.io's AI services (0-100 total).
 
@@ -83,8 +105,10 @@ Components (respect the max for each):
 - timing (0-25): open buying window — new executive, restructuring/cost mandate,
   recent IPO. RECENCY IS THE POINT: every dated signal carries age_days and a
   pre-decayed effective_weight — score from those, not the raw weight. An event
-  ≤90 days old is a hot window; 6 months is cooling; if the newest dated event
-  is >180 days old, timing must be ≤8.
+  ≤90 days old is a hot window; 6 months is cooling. The packet's
+  `timing_ceiling` (the decayed timing math plus small headroom) is a HARD
+  cap: timing must be ≤ timing_ceiling. Never manufacture urgency from
+  undated evidence.
 - commercial_fit (0-20): would they buy outside services — GTM inefficiency
   (S&M rising, growth slowing), cash to spend, hiring in sales/marketing,
   right size/sector for a services engagement.
@@ -338,6 +362,11 @@ def prepare(
             derived["urgency"] = urgency_of(derived["age_days"])
             slim_signals.append(derived)
         base_score = base_components(slim_signals)
+        # one recency story: decay produces the timing math, and the LLM's
+        # timing component may not exceed it plus small headroom (replaces the
+        # old rubric-only ">180 days -> timing <=8" rule); commit clamps
+        timing_ceiling = min(25, round(base_score["timing"]) + int(
+            SETTINGS.get("scoring", {}).get("timing_ceiling_headroom", 8)))
         # after the base math is done, the raw decay inputs are packet bloat:
         # the scorer is told to use effective_weight/age_days, and it only
         # needs a citable snippet of each quote, not the filing paragraph
@@ -363,10 +392,10 @@ def prepare(
             "signals": slim_signals,
             "angles": active_angles,
             "base_score": base_score,
-            "hard_signals_present": sorted(
-                {s["type"] for s in slim_signals}
-                & set(SETTINGS.get("scoring", {}).get("hard_signals", []))
-            ),
+            "timing_ceiling": timing_ceiling,
+            "hard_signals_present": sorted(hard_types_present(
+                slim_signals, set(SETTINGS.get("scoring", {}).get("hard_signals", []))
+            )),
             "shared_file": shared_path.as_posix(),
             "output_path": output_path,
             "instructions": (
@@ -436,6 +465,16 @@ def commit(run_id: str | None = None) -> dict:
             summary["orphan"].append(ticker)
             continue
         packet_file = candidates[-1]
+        packet = json.loads(packet_file.read_text())
+
+        def _clamp_timing(v: ScoreVerdict) -> ScoreVerdict:
+            # timing_ceiling is the decayed timing math + headroom (absent in
+            # packets prepared before the feature) — deterministic recency
+            # wins over LLM-manufactured urgency, before any band/gate math
+            ceiling = packet.get("timing_ceiling")
+            if ceiling is not None and v.timing > int(ceiling):
+                v.timing = int(ceiling)
+            return v
 
         replicates = run_results.get(ticker, [])
         single_file = single_results.get(ticker)
@@ -446,7 +485,7 @@ def commit(run_id: str | None = None) -> dict:
             parsed = []
             for f in replicates:
                 try:
-                    parsed.append(ScoreVerdict.model_validate(json.loads(f.read_text())))
+                    parsed.append(_clamp_timing(ScoreVerdict.model_validate(json.loads(f.read_text()))))
                 except (ValidationError, json.JSONDecodeError) as exc:
                     summary["invalid"].append(f"{ticker}: {f.name}: {str(exc)[:200]}")
             if len(parsed) < 3:
@@ -459,7 +498,7 @@ def commit(run_id: str | None = None) -> dict:
         else:
             try:
                 raw = json.loads(single_file.read_text())
-                verdict = ScoreVerdict.model_validate(raw)
+                verdict = _clamp_timing(ScoreVerdict.model_validate(raw))
             except (ValidationError, json.JSONDecodeError) as exc:
                 summary["invalid"].append(f"{ticker}: {str(exc)[:200]}")
                 continue
@@ -469,15 +508,12 @@ def commit(run_id: str | None = None) -> dict:
                 continue
             model_label = "deterministic/pre-gate" if is_pregate else "claude-code/haiku-subagent"
             result_files = [single_file]
-
-        packet = json.loads(packet_file.read_text())
         company = db.get_company_by_ticker(ticker)
         if company is None:
             summary["orphan"].append(ticker)
             continue
 
-        signal_types = {s["type"] for s in packet["signals"]}
-        has_hard = bool(signal_types & hard)
+        has_hard = bool(hard_types_present(packet["signals"], hard))
         total = verdict.total
 
         packet_fps = {a["fingerprint"] for a in packet.get("angles", [])}

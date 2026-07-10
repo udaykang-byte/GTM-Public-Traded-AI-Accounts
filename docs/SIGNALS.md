@@ -6,6 +6,10 @@ scoring components: **intent**, **capability_gap**, **timing**, **commercial_fit
 (mapping in `src/pipeline/scoring.py` → `COMPONENT_OF`).
 
 **Hard signals** (at least one required to qualify): E1, E3, E4, E5, P1, P2, P3.
+Parallel-sourced hard signals (P1/P2/P3) satisfy the gate only when they carry
+a source URL and substantive detail (≥40 chars) — web research earns hardness
+with evidence; EDGAR signals are filing-derived and exempt
+(`scoring.hard_types_present`).
 
 ## EDGAR signals (free — SEC filings via edgartools + XBRL companyfacts)
 
@@ -18,7 +22,7 @@ scoring components: **intent**, **capability_gap**, **timing**, **commercial_fit
 | E5 | GTM inefficiency | XBRL: S&M (or SG&A) % of revenue rising ≥5% relatively while revenue growth <15% | Paying more for each dollar of growth → AI lead-gen/outreach pitch | commercial_fit |
 | E6 | No tech leadership | Latest DEF 14A names no CTO/CIO/CDO-type officer | Nobody inside owns AI → needs outside partner | capability_gap |
 | E7 | Recent IPO ≤24mo | 424B4 / S-1 / 8-A12B filed within window | Building GTM + reporting muscle from scratch | timing |
-| E8 | Sector peer laggard | Derived at scoring time: no AI language while ≥40% of enriched sector peers show AI signals | Competitive-pressure angle | (packet-only) |
+| E8 | Sector peer laggard | Derived at scoring time: no AI language while ≥40% of enriched sector peers show AI signals | Competitive-pressure angle; peers acting while they don't = capability gap | capability_gap |
 | E9 | Cash capacity | XBRL cash & equivalents ≥ $10M | Can actually afford a services engagement | commercial_fit |
 
 ## Parallel signals (paid — web research, one structured task per company)
@@ -46,6 +50,13 @@ Deterministic base score = capped sum of signal weights per component. The LLM
 scorer (Haiku subagent) sees the base math and may deviate with justification.
 Qualify: `total ≥ 65` AND ≥1 hard signal. Disqualify: `total < 45`. Between:
 stays `scored` — human review band. All thresholds in `config/settings.yaml`.
+
+**One recency story**: dated signals decay via `scoring.recency`
+(full weight ≤ `full_days`, linear to `floor` × weight at the window edge);
+each packet carries `timing_ceiling` = round(decayed base timing) +
+`scoring.timing_ceiling_headroom` (default 8), and `score --commit` clamps the
+LLM's timing component to it. Timing can never be manufactured from undated
+evidence.
 
 ### Stacking bonus and urgency metadata (v3)
 

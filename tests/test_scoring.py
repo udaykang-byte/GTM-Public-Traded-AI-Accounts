@@ -66,6 +66,9 @@ def dirs(tmp_path, monkeypatch):
     # median enforcement off by default (band 0) so single-shot commits pass;
     # the median-of-3 tests re-enable it
     monkeypatch.setitem(scoring.SETTINGS["scoring"], "median_band", 0)
+    # timing ceiling neutral by default (headroom 25 -> ceiling always 25);
+    # the timing-ceiling tests set the real headroom
+    monkeypatch.setitem(scoring.SETTINGS["scoring"], "timing_ceiling_headroom", 25)
     return q, r, a
 
 
@@ -571,3 +574,107 @@ def test_commit_pregate_verdict_exempt_from_median(dirs, monkeypatch):
     summary = scoring.commit(run_id="t")
     assert summary["median_pending"] == []
     assert [x["ticker"] for x in summary["disqualified"]] == ["TST"]
+
+
+# --- R7: E8 peer-laggard feeds capability_gap ---
+
+def test_e8_contributes_to_capability_gap():
+    comps = scoring.base_components([{"type": "E8", "weight": 6.0, "observed_at": None}])
+    assert comps["capability_gap"] == 6.0
+
+
+def test_derived_e8_raises_base_capability_gap(dirs):
+    q, r, a = dirs
+    peers = [{**COMPANY, "cik": i, "ticker": f"P{i}"} for i in range(2, 8)]
+    fake = scoring.db
+    fake.get_companies = lambda status=None: (
+        [dict(COMPANY)] if status == "enriched" else [dict(COMPANY), *peers]
+    )
+    fake.all_signals = lambda: {
+        1: [{**SIGNAL, "type": "E6", "observed_at": None}],  # E6 weight 15 (fixture)
+        **{i: [dict(SIGNAL)] for i in range(2, 8)},
+    }
+    scoring.prepare()
+    packet = json.loads(_qfile(q).read_text())
+    assert any(s["type"] == "E8" for s in packet["signals"])
+    # E6 (15) + derived E8 (weights.E8, default 6) both land in capability_gap
+    assert packet["base_score"]["capability_gap"] == pytest.approx(21.0)
+
+
+# --- R9: evidence floor for P-sourced hard signals ---
+
+def test_parallel_hard_signal_needs_evidence(dirs):
+    q, r, a = dirs
+    thin_p3 = {**SIGNAL, "type": "P3", "source": "parallel",
+               "evidence_url": None, "detail": "AI stuff"}
+    scoring.db.all_signals = lambda: {1: [thin_p3]}
+    scoring.prepare()
+    packet = json.loads(_qfile(q).read_text())
+    assert packet["hard_signals_present"] == []  # P3 present but evidence-thin
+
+
+def test_parallel_hard_signal_with_evidence_counts(dirs):
+    q, r, a = dirs
+    good_p3 = {**SIGNAL, "type": "P3", "source": "parallel",
+               "evidence_url": "https://x.co/news",
+               "detail": "Announced an AI/ML credit-model partnership with two named vendors."}
+    scoring.db.all_signals = lambda: {1: [good_p3]}
+    scoring.prepare()
+    packet = json.loads(_qfile(q).read_text())
+    assert packet["hard_signals_present"] == ["P3"]
+
+
+def test_edgar_hard_signal_exempt_from_evidence_floor(dirs):
+    q, r, a = dirs
+    # fixture E1 has no evidence_url — EDGAR signals are filing-derived, still hard
+    scoring.prepare()
+    packet = json.loads(_qfile(q).read_text())
+    assert packet["hard_signals_present"] == ["E1"]
+
+
+def test_commit_hard_gate_uses_evidence_floor(dirs):
+    """A 65+ verdict whose only hard-type signal is evidence-thin P3 lands in
+    review, not qualified — commit applies the same floor as prepare."""
+    q, r, a = dirs
+    thin_p3 = {**SIGNAL, "type": "P3", "source": "parallel",
+               "evidence_url": None, "detail": "AI stuff"}
+    scoring.db.all_signals = lambda: {1: [thin_p3]}
+    summary = _run_commit(dirs, [dict(ANGLE_ROW)], make_verdict())  # total 75
+    assert summary["qualified"] == []
+    assert [x["ticker"] for x in summary["review"]] == ["TST"]
+
+
+# --- R10: one recency story — packet timing_ceiling caps the LLM timing ---
+
+def test_packet_carries_timing_ceiling(dirs, monkeypatch):
+    q, r, a = dirs
+    monkeypatch.setitem(scoring.SETTINGS["scoring"], "timing_ceiling_headroom", 8)
+    scoring.prepare()  # fixture signal is E1 (intent) -> base timing 0
+    packet = json.loads(_qfile(q).read_text())
+    assert packet["timing_ceiling"] == 8  # round(0) + headroom 8
+
+
+def test_commit_clamps_timing_to_ceiling(dirs, monkeypatch):
+    # base timing 0 -> ceiling 8; LLM says timing 20 -> clamped, total 80 -> 68
+    monkeypatch.setitem(scoring.SETTINGS["scoring"], "timing_ceiling_headroom", 8)
+    v = make_verdict(intent=25, capability_gap=20, timing=20, commercial_fit=15)
+    summary = _run_commit(dirs, [dict(ANGLE_ROW)], v)
+    row = scoring.db.scores[-1]
+    assert row["timing"] == 8
+    assert row["total"] == 68
+    assert [x["total"] for x in summary["qualified"]] == [68]
+
+
+def test_commit_tolerates_packets_without_timing_ceiling(dirs):
+    """Queue packets prepared before this feature have no timing_ceiling key."""
+    q, r, a = dirs
+    scoring.db.angles_rows = [dict(ANGLE_ROW)]
+    scoring.prepare()
+    packet_path = _qfile(q)
+    packet = json.loads(packet_path.read_text())
+    packet.pop("timing_ceiling", None)
+    packet_path.write_text(json.dumps(packet))
+    (r / "TST.json").write_text(json.dumps(make_verdict(timing=25)))
+    summary = scoring.commit(run_id="t")
+    assert summary["invalid"] == []
+    assert scoring.db.scores[-1]["timing"] == 25  # no ceiling -> no clamp

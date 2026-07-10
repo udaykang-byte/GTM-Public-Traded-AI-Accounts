@@ -28,6 +28,7 @@ uv run python -m pipeline people --limit 5  # contacts for qualified accounts
 uv run python -m pipeline messages --prepare # per-contact packets -> data/message_queue/
 uv run python -m pipeline messages --commit  # QA gate -> messages table (drafts)
 uv run python -m pipeline outcome 42 --event replied  # log an outcome event; --csv path for batch
+uv run python -m pipeline calibrate      # outcome -> signal-weight report (report-only)
 uv run python -m pipeline export --messages  # qualified.csv + messages.csv
 uv run python -m pipeline profile --list/--show/--validate  # inspect the active profile pack
 ```

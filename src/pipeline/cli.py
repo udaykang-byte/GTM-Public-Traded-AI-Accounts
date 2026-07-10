@@ -974,6 +974,14 @@ def outcome(
 
 
 @app.command()
+def calibrate():
+    """Outcome -> signal-weight calibration report (report-only, never edits settings)."""
+    from pipeline import calibrate as calibrate_mod
+
+    calibrate_mod.render(console)
+
+
+@app.command()
 def promote(tickers: str = typer.Argument(..., help="Comma-separated tickers to promote from the review band to qualified")):
     """Human review-band decision: mark 'scored' companies as qualified."""
     from pipeline import db

@@ -66,6 +66,12 @@ scoring:
   # verdict (total = capped base components, no stacking). max_llm_lift 40
   # keeps every qualifier in the 244 archived verdicts (min qualifying base
   # 26.2 -> gate cutoff base < 25); on that history it skips ~51% of LLM runs.
+  # Re-audited 2026-07-10 on 260 archived runs: lift 40 gates 48% and loses
+  # ZERO eventual qualifiers (max observed lift 43.2; only 3 lifts exceeded 40
+  # and all had base high enough to stay ungated). Known trade-off class:
+  # LFMD-style review-band placements (base ~21, LLM 62) are gated and only
+  # recoverable via deep enrichment + rescore. E8 now feeding capability_gap
+  # un-gates ~19 gap-driven companies on that history.
   pre_gate:
     enabled: true
     max_llm_lift: 40
@@ -80,6 +86,14 @@ scoring:
   recency:
     full_days: 90
     floor: 0.25
+  # One recency story (2026-07-10): the decay math above is the single source;
+  # each packet carries timing_ceiling = round(decayed base timing) + this
+  # headroom, and `score --commit` clamps the LLM's timing component to it
+  # (replaces the old rubric-only ">180 days -> timing <=8" rule). On the 260
+  # archived runs a +8 headroom would have caught pure-invention timing (TALK:
+  # base 0 -> LLM 22) while pushing only 4 borderline runs into the
+  # median-of-3 band.
+  timing_ceiling_headroom: 8
   # Deterministic base weights per signal type (component caps applied in code)
   weights:
     E1: 15   # new/rising AI language in strategy sections
@@ -89,6 +103,7 @@ scoring:
     E5: 8    # S&M spend rising while growth slows
     E6: 8    # no tech leadership disclosed
     E7: 8    # recent IPO <=24mo
+    E8: 6    # sector peer laggard (derived at scoring time; feeds capability_gap since 2026-07-10)
     E9: 4    # cash capacity to buy services
     P1: 10   # AI job postings (adopter marker)
     P2: 8    # SDR/BDR/marketing hiring
@@ -98,7 +113,7 @@ scoring:
     P6: 6    # exec AI commentary
   component_caps:
     intent: 30           # E1 E2 P3 P6
-    capability_gap: 25   # E6 P4 + absence-of-execution logic
+    capability_gap: 25   # E6 P4 E8 + absence-of-execution logic
     timing: 25           # E3 E4 E7
     commercial_fit: 20   # E5 E9 P1 P2 P5 + sector/band fit
   # v3: bonus applied to the deterministic BASE score only (never the LLM
@@ -211,3 +226,7 @@ analytics:
   # a funnel/attribution section with fewer sends than this prints
   # "insufficient data (<N sent)" instead of a rate — small samples lie.
   min_sends_for_attribution: 10
+  # `pipeline calibrate` (outcome -> signal-weight report) uses a higher bar:
+  # weight advice from thin samples is worse than none. Report-only — it
+  # never edits scoring.weights; that stays a human decision.
+  min_sends_for_calibration: 25
