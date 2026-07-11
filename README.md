@@ -1,4 +1,8 @@
-# GTM(Public Traded) — AI-Readiness Pipeline for Public Micro-Caps
+# AIPT — AI-Ready Public Companies Pipeline
+
+*Finds small US-listed companies that show public evidence they need AI help,
+scores that evidence, finds the decision-makers, and drafts the first outreach —
+all from SEC filings and web research.*
 
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
