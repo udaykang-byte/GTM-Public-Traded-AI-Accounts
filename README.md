@@ -1,4 +1,4 @@
-# AIPT — AI-Ready Public Companies Pipeline
+# AI Prospecting Pipeline for Public Companies
 
 *Finds small US-listed companies that show public evidence they need AI help,
 scores that evidence, finds the decision-makers, and drafts the first outreach —
@@ -281,5 +281,5 @@ pack interactively instead of running a pipeline stage.
 
 Built at [martechs.io](https://martechs.io). Scope stops at drafted outreach
 sequences (qualified accounts + contacts + per-contact message drafts) — no
-sending, no CRM pushes. AIPT reads only public data (SEC filings, public web
+sending, no CRM pushes. The pipeline reads only public data (SEC filings, public web
 research); nothing it produces is investment advice.
