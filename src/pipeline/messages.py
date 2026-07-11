@@ -311,7 +311,11 @@ def prepare(
             colleagues = [
                 {"name": c["name"], "title": c["title"],
                  "role_bucket": c.get("role_bucket") or ""}
-                for c in contacts if c.get("id") != contact.get("id")
+                # the diversity_note says these colleagues "receive sequences"
+                # — a no_channel contact never does, so they don't belong here
+                for c in contacts
+                if c.get("id") != contact.get("id")
+                and (c.get("email") or c.get("linkedin_url"))
             ]
             output_path = (MSG_RESULTS_DIR / f"{name}.json").as_posix()
             persona = people_mod.match_persona(

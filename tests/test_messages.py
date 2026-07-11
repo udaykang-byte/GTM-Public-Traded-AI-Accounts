@@ -717,3 +717,15 @@ def test_two_sentence_line_and_ps_line_do_not_warn(packet):
     ps = BODY2.replace("\n\nUday", "\n\nP.S. They ship weekly. Worth watching.\n\nUday")
     _, warn = _qa(seq_with_step(2, body=ps), packet)
     assert not any("paragraph" in w for w in warn)
+
+
+def test_colleagues_exclude_no_channel_contacts(dirs):
+    """diversity_note says colleagues 'receive sequences' — a no_channel
+    contact never does, so they must not appear as a colleague."""
+    q, _, _ = dirs
+    messages.db.contacts_rows.append({"id": 14, "name": "Cara Ghost", "title": "CFO",
+                                      "role_bucket": "CFO", "linkedin_url": None, "email": None})
+    messages.prepare()
+    pkt = anne_packet(q)
+    names = {c["name"] for c in pkt["colleagues_also_messaged"]}
+    assert names == {"Bob Roy"}

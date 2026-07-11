@@ -52,3 +52,38 @@ def test_weight_suggestions_empty_when_baseline_insufficient():
     baseline = {"insufficient": True, "min_sends": 25, "n_sent": 4}
     table = {"E1": {"insufficient": False, "n_sent": 30, "positive_reply_rate": 0.2, "reply_rate": 0.3}}
     assert calibrate.weight_suggestions(table, baseline) == []
+
+
+def test_zero_positive_baseline_never_falls_back_to_reply_rate():
+    """A 0% positive-reply baseline is a real value, not missing data — the
+    old `or reply_rate` fallback would silently rank signals against the
+    broader reply rate."""
+    baseline = {"insufficient": False, "n_sent": 30, "reply_rate": 0.5,
+                "positive_reply_rate": 0.0, "meeting_rate": 0.0}
+    table = {"E1": {"insufficient": False, "n_sent": 30, "reply_rate": 0.5,
+                    "positive_reply_rate": 0.2, "meeting_rate": 0.0}}
+    out = calibrate.weight_suggestions(table, baseline)
+    assert out[0]["ratio"] is None
+    assert out[0]["verdict"] == "no baseline rate"
+
+
+def test_zero_positive_signal_rate_counts_as_lower_not_reply_fallback():
+    baseline = {"insufficient": False, "n_sent": 40, "reply_rate": 0.2,
+                "positive_reply_rate": 0.1, "meeting_rate": 0.0}
+    table = {"E5": {"insufficient": False, "n_sent": 40, "reply_rate": 0.5,
+                    "positive_reply_rate": 0.0, "meeting_rate": 0.0}}
+    out = calibrate.weight_suggestions(table, baseline)
+    assert out[0]["ratio"] == 0.0
+    assert out[0]["verdict"] == "consider lowering weight"
+
+
+def test_augment_with_derived_adds_e8_for_peer_laggards():
+    """E8 is synthesized at scoring time and never persisted — calibrate must
+    derive it the same way or the R7 weight can never be evaluated."""
+    companies = [{"cik": i, "sector_bucket": "saas"} for i in range(1, 8)]
+    signals_by_cik = {i: [{"type": "E1"}] for i in (2, 3, 4)}  # 3/6 peers = 50%
+    signals_by_cik[1] = [{"type": "E9"}]  # target: no AI language
+    out = calibrate.augment_with_derived({1: [{"id": 9}]}, signals_by_cik, companies)
+    assert any(s["type"] == "E8" for s in out[1])
+    # non-messaged companies untouched
+    assert not any(s.get("type") == "E8" for s in out.get(2, []))

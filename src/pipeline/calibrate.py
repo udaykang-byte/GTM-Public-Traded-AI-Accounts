@@ -56,14 +56,21 @@ def weight_suggestions(table: dict[str, dict], baseline: dict) -> list[dict]:
     Empty when the baseline itself is insufficient — no advice from noise."""
     if baseline.get("insufficient"):
         return []
-    base_rate = baseline.get("positive_reply_rate") or baseline.get("reply_rate") or 0.0
+    # positive_reply_rate is the north-star rate; 0.0 is a real value, never
+    # a missing one — falling back to reply_rate would rank signals against
+    # the wrong metric exactly when positive replies are scarce
+    base_rate = baseline.get("positive_reply_rate")
+    if base_rate is None:
+        base_rate = 0.0
     out: list[dict] = []
     for t, funnel in sorted(table.items()):
         if funnel.get("insufficient"):
             out.append({"signal": t, "verdict": "insufficient data",
                         "n_sent": funnel.get("n_sent", 0), "ratio": None})
             continue
-        rate = funnel.get("positive_reply_rate") or funnel.get("reply_rate") or 0.0
+        rate = funnel.get("positive_reply_rate")
+        if rate is None:
+            rate = 0.0
         ratio = (rate / base_rate) if base_rate else None
         if ratio is None:
             verdict = "no baseline rate"
@@ -75,6 +82,30 @@ def weight_suggestions(table: dict[str, dict], baseline: dict) -> list[dict]:
             verdict = "hold"
         out.append({"signal": t, "verdict": verdict, "n_sent": funnel["n_sent"],
                     "ratio": round(ratio, 2) if ratio is not None else None})
+    return out
+
+
+def augment_with_derived(
+    messages_by_cik: dict[int, list[dict]],
+    signals_by_cik: dict[int, list[dict]],
+    companies: list[dict],
+) -> dict[int, list[dict]]:
+    """E8 (sector peer laggard) is synthesized at scoring time and never
+    persisted — derive it here the same way (scoring._derived_cohort_signal)
+    for each messaged company, or the E8 weight could never be evaluated
+    against outcomes. Only messaged companies are augmented."""
+    from pipeline.scoring import _derived_cohort_signal
+
+    by_cik = {int(c["cik"]): c for c in companies}
+    out = dict(signals_by_cik)
+    for cik in messages_by_cik:
+        company = by_cik.get(int(cik))
+        if not company:
+            continue
+        sigs = list(out.get(int(cik), []))
+        derived = _derived_cohort_signal(company, sigs, companies, signals_by_cik)
+        if derived:
+            out[int(cik)] = sigs + [derived]
     return out
 
 
@@ -94,7 +125,8 @@ def render(console) -> None:
         return
 
     messages_by_cik = db.all_messages()
-    signals_by_cik = db.all_signals()
+    signals_by_cik = augment_with_derived(
+        messages_by_cik, db.all_signals(), db.get_companies())
     baseline = outcome_funnel(events, min_sends)
 
     if baseline.get("insufficient"):

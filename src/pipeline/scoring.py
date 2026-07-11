@@ -479,8 +479,18 @@ def commit(run_id: str | None = None) -> dict:
         replicates = run_results.get(ticker, [])
         single_file = single_results.get(ticker)
         if replicates:
-            if len(replicates) < 3:
-                summary["median_pending"].append(f"{ticker}: {len(replicates)}/3 runs")
+            # the documented rule is median of EXACTLY run1/run2/run3 — a
+            # stale .run4 or a duplicate rerun must never silently join the
+            # median (and the row would still be labeled median3)
+            nums = sorted(int(_RUN_SUFFIX_RE.search(f.stem).group(0)[4:]) for f in replicates)
+            if len(nums) < 3 and set(nums) <= {1, 2, 3}:
+                summary["median_pending"].append(f"{ticker}: {len(nums)}/3 runs")
+                continue
+            if nums != [1, 2, 3]:
+                summary["invalid"].append(
+                    f"{ticker}: replicates must be exactly .run1/.run2/.run3 "
+                    f"(found: {', '.join(f'.run{n}' for n in nums)}) — remove strays and re-commit"
+                )
                 continue
             parsed = []
             for f in replicates:

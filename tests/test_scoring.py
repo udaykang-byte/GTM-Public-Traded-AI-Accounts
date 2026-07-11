@@ -678,3 +678,30 @@ def test_commit_tolerates_packets_without_timing_ceiling(dirs):
     summary = scoring.commit(run_id="t")
     assert summary["invalid"] == []
     assert scoring.db.scores[-1]["timing"] == 25  # no ceiling -> no clamp
+
+
+def test_median_requires_exactly_runs_one_two_three(dirs, monkeypatch):
+    """A stale .run4 (or replicates under other numbers) must not silently
+    join the median — the documented rule is median of exactly run1/2/3."""
+    q, r, a = dirs
+    _median_on(monkeypatch)
+    scoring.db.angles_rows = [dict(ANGLE_ROW)]
+    scoring.prepare()
+    for n in (1, 2, 4):
+        (r / f"TST.run{n}.json").write_text(json.dumps(make_verdict()))
+    summary = scoring.commit(run_id="t")
+    assert any("run1/.run2/.run3" in item for item in summary["invalid"]), summary
+    assert scoring.db.scores == []
+    assert (r / "TST.run4.json").exists()  # left in place for cleanup
+
+
+def test_median_rejects_extra_fourth_run(dirs, monkeypatch):
+    q, r, a = dirs
+    _median_on(monkeypatch)
+    scoring.db.angles_rows = [dict(ANGLE_ROW)]
+    scoring.prepare()
+    for n in (1, 2, 3, 4):
+        (r / f"TST.run{n}.json").write_text(json.dumps(make_verdict()))
+    summary = scoring.commit(run_id="t")
+    assert any("run1/.run2/.run3" in item for item in summary["invalid"]), summary
+    assert scoring.db.scores == []
