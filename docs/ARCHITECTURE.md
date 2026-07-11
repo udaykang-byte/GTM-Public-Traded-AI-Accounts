@@ -71,6 +71,7 @@ All code lives in `src/pipeline/` — one module per responsibility:
 | `messages.py` | Outreach drafting: per-contact packet build, deterministic copy QA gate, draft persistence |
 | `outcomes.py` | Append-only outcome events (`message_events`) + monotonic status advancement for drafted messages |
 | `analytics.py` | Outcome analytics: funnel conversion, time-in-stage, message attribution — pure computation, `render()` drives `status --analytics` |
+| `calibrate.py` | Outcome → signal-weight report (`pipeline calibrate`): per-signal reply rates vs baseline with directional weight advice — report-only, never edits settings |
 
 Dependency direction is strictly inward: collectors, `people.py`, and
 `messages.py` depend on `db.py`/`models.py`/`config.py`, never on each other.
@@ -150,13 +151,21 @@ companies in the same `(tier asc, priority desc)` order as people. Each packet
 carries a `persona` block (pains/language/committee_role/seniority) when the
 contact's role_bucket or title resolves against the pack's `personas.yaml`
 (`people.match_persona`) — the copywriter speaks the recipient's language, not
-just their title. The `/outreach` skill's Haiku subagents write 4-step
-sequences; `messages --commit` runs a deterministic QA gate (banned words —
-canonical list in settings.yaml `messages.banned_words` — subject shape,
-placeholders, packet-fact checks — hard failures stay queued for re-spawn;
-a step-1 personalization score below `messages.personalization_min` adds a
-warning) and upserts drafts into `messages` keyed by (contact, angle).
-Companies without a fresh angle are skipped. No company-status transition —
+just their title. Contacts with no
+email and no LinkedIn URL are skipped (`no_channel`) before a packet is
+written — no copywriter run for a sequence that can't be sent. Each packet
+angle carries a one-line human-readable `summary`, and when colleagues at the
+same company are being messaged on the same angle, a `diversity_note` tells
+the copywriter to differentiate through this contact's lens. The `/outreach`
+skill's Haiku subagents write 4-step sequences; `messages --commit` runs a
+deterministic QA gate (banned words — canonical list in settings.yaml
+`messages.banned_words` — subject shape, word counts per
+`messages.word_count` (step 1: 50–90, hard max 125), any em dash, placeholders,
+packet-fact checks — hard failures stay queued for re-spawn; warning-tier
+checks ride on the row: a step-1 personalization score below
+`messages.personalization_min`, dense paragraphs with 3+ sentences on one
+line, you:we ratio) and upserts drafts into `messages` keyed by (contact,
+angle). Companies without a fresh angle are skipped. No company-status transition —
 coverage is derived, and per-sequence state lives on `messages.status`.
 
 **export** — joins qualified companies with contacts into

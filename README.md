@@ -135,6 +135,7 @@ different ICP pack — see [Adapting it to your own ICP](#adapting-it-to-your-ow
 | `messages --prepare` / `--commit` | Draft per-contact outreach sequences (Haiku subagents + QA gate) |
 | `export` | Write qualified accounts + contacts to `data/exports/qualified.csv` (`--messages` adds `messages.csv` + a deliverability checklist) |
 | `outcome <message_id>` | Record what happened to a sent sequence (`--event ...`, or `--csv` for a batch; `--ticker`/`--contact` as a fuzzy lookup) |
+| `calibrate` | Outcome → signal-weight report: which signals' messages actually get replies (report-only; weights stay a human decision) |
 | `promote TICK1,TICK2` | Move review-band (or previously disqualified) companies to qualified by hand |
 | `prune` | Remove stale/out-of-scope companies (`--dry-run` first) |
 | `apply-schema` | Apply `sql/schema.sql` to Supabase |

@@ -82,7 +82,7 @@ text — saas/fintech/edtech/healthcare/other is just the default pack's set.
 ## Layout
 
 - `src/pipeline/` — cli, db, models, universe, edgar_signals, parallel_signals,
-  scoring, llm, people, messages
+  scoring, llm, people, messages, outcomes, analytics, calibrate
 - `config/settings.yaml` — universe band, sector→SIC map, weights, thresholds, caps
 - `config/services.yaml` — martechs.io service catalog (drives service-fit mapping)
 - `config/outbound_copywriter.md` — copy framework the /outreach subagents follow

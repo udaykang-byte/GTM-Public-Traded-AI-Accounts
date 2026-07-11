@@ -175,6 +175,13 @@ Once there's data, `pipeline status --analytics` renders:
 Below the minimum-sends floor, a section prints "insufficient data" instead of
 a rate — small samples lie.
 
+Once real sends accumulate past `analytics.min_sends_for_calibration`
+(default 25), `pipeline calibrate` closes the loop back to scoring: it
+correlates outcome events with the signals present at each messaged company
+and reports which signal types over/under-perform the baseline positive-reply
+rate, with directional weight advice ("consider raising/lowering weight").
+Report-only by design — `scoring.weights` stays a human decision.
+
 ## Status machine
 
 `new → enriched → scored → qualified | disqualified → contacts_found`
@@ -204,10 +211,12 @@ a rate — small samples lie.
 - Message drafting: zero API cost (same Haiku-subagent mechanism, /outreach skill);
   capped at `messages.max_per_run` contact packets per prepare. Copy rules live in
   `config/outbound_copywriter.md`; deterministic QA (banned words — canonical list
-  in settings.yaml `messages.banned_words` — subject shape, packet-facts-only
-  checks, a `personalization N/5` warning below `messages.personalization_min`)
-  runs at `messages --commit`. Companies without a fresh angle are skipped —
-  never message on a stale hook. `export --messages` writes a deliverability
+  in settings.yaml `messages.banned_words` — subject shape, word counts
+  (step 1: 50–90, hard max 125), any em dash, packet-facts-only checks, plus
+  warning-tier flags: `personalization N/5` below `messages.personalization_min`,
+  dense paragraphs, you:we ratio) runs at `messages --commit`. Companies
+  without a fresh angle are skipped — never message on a stale hook — and so
+  are contacts with no email and no LinkedIn (`no_channel`). `export --messages` writes a deliverability
   checklist next to the CSVs — work through it before the first send.
 
 ## Troubleshooting
