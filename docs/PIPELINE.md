@@ -1,5 +1,10 @@
 # Pipeline Runbook
 
+This is the operator's manual: how to set the pipeline up once, the normal cycle
+of commands to run it end to end, and what to do when something looks wrong. If
+you want to understand *what* the pipeline does before running it, start with the
+[README](../README.md).
+
 ## One-time setup
 
 1. `cp .env.example .env` and fill in: `EDGAR_IDENTITY`, `SUPABASE_URL`,

@@ -4,35 +4,61 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-brightgreen)
 
-This orchestrator finds US-listed micro-cap companies (Fintech, Edtech, Healthcare, SaaS) that show
-public evidence they need AI services, scores that evidence with cited reasoning, and
-surfaces decision-maker contacts — turning SEC filings and web research into a ranked,
-exportable account list.
+## What this does
 
-Every company moves through a simple funnel:
+**In one sentence:** this tool reads public data — SEC filings and web research — to
+find small US public companies that show signs they need help with AI, ranks them by
+how strong that evidence is, finds the right people to talk to at each one, and drafts
+the first outreach emails. Nothing is ever sent automatically; the output is a ranked
+account list with contacts and email drafts you can review and use.
+
+It was built for selling AI services, but the target profile (sectors, scoring rules,
+pitch) is fully configurable — see [Adapting it to your own ICP](#adapting-it-to-your-own-icp).
+
+## How it works, step by step
+
+1. **Find companies** (`discover` or `ingest`) — build a list of small public
+   companies in the sectors you care about, either by screening the whole SEC
+   universe or by giving it tickers directly.
+2. **Collect evidence** (`enrich`) — read each company's SEC filings and public web
+   presence for signs they need AI help: new AI language in their annual report, a
+   fresh executive hire, cost-cutting programs, hiring for sales roles, and so on.
+3. **Score them** (`score`) — add the evidence up into a 0–100 score with written,
+   cited reasoning. High scorers qualify, low scorers are dropped, and the middle
+   band waits for a human decision.
+4. **Find people** (`people`) — look up decision-makers (name, title, LinkedIn,
+   public email) at the companies that qualified.
+5. **Draft outreach** (`messages`) — write a short 4-step email sequence for each
+   contact, grounded in that company's actual evidence. Drafts only.
+6. **Learn from results** (`outcome`, `calibrate`) — once you send the emails
+   yourself, record what happened (replies, meetings) and get a report on which
+   kinds of evidence actually lead to conversations.
+
+Every company moves through a simple funnel as those steps run:
 
 ```
 new → enriched → scored → qualified | disqualified → contacts_found
 ```
 
-- **new** — seeded from a universe screen (`discover`) or an explicit list (`ingest`).
-  Both run an L1 pre-screen first (excluded tickers/SIC, cap band, exchange/OTC,
-  shell-company names) so hard-disqualified rows are written straight to
-  `disqualified` — never enriched, never spending an EDGAR/Parallel call
-- **enriched** — signals collected from SEC EDGAR (free) and Parallel.ai web research (paid)
-- **scored** — deterministic base score + LLM reasoning; companies between the
-  disqualify floor and qualify threshold stay here as the **human review band**.
-  Every scored company also gets a **tier** (T1 top qualified, T2 qualified, T3
-  review band, T4 disqualified) that decides who `people` and
-  `messages --prepare` work first when a per-run cap bites
-- **qualified / disqualified** — threshold decision (≥65 total AND ≥1 hard signal)
-- **contacts_found** — decision-makers resolved for qualified accounts, ready to export
+- **new** — just added, from `discover` or `ingest`. Obvious non-fits (wrong size,
+  wrong sector, shell companies) are filtered out at the door and marked
+  `disqualified` before any money or API calls are spent on them
+- **enriched** — evidence collected from SEC EDGAR (free) and Parallel.ai web
+  research (paid)
+- **scored** — evidence added up into a score, with LLM-written reasoning. Companies
+  that are neither clearly good nor clearly bad stay here as the **human review
+  band** — a person decides
+- **qualified / disqualified** — the score decided: qualified needs a total of 65+
+  and at least one strong ("hard") signal
+- **contacts_found** — decision-makers found for qualified companies, ready to export
 
-From `contacts_found`, the `messages` stage drafts a 4-step outreach sequence per
-contact (built on each company's fresh outreach angles) — drafts only; no sending.
-Once a sequence actually ships (outside this tool), `pipeline outcome` records what
-happened — replies, meetings, opt-outs — and `pipeline status --analytics` turns
-that log into funnel conversion and reply/meeting attribution.
+Qualified companies also get a **tier** (T1 best → T4 disqualified) so that when a
+run can only afford to process a few companies, the strongest ones go first.
+
+After `contacts_found`, the `messages` stage drafts a 4-step outreach sequence per
+contact — drafts only; no sending. Once you actually send a sequence (outside this
+tool), `pipeline outcome` records what happened — replies, meetings, opt-outs — and
+`pipeline status --analytics` turns that log into conversion and reply rates.
 
 ## Architecture at a glance
 
@@ -144,28 +170,31 @@ The normal cycle and troubleshooting notes live in [docs/PIPELINE.md](docs/PIPEL
 
 ## Signals and scoring
 
-Enrichment looks for 15 signal types — 9 from SEC filings (E1–E9: new AI language in
-10-Ks, leadership changes, restructuring programs, GTM inefficiency from XBRL
-financials, missing tech leadership, recent IPOs…) and 6 from web research (P1–P6: AI
-job postings, GTM hiring, AI announcements, product gaps vs competitors…). Every signal
-carries evidence — a URL and a quote wherever possible.
+A **signal** is one piece of evidence that a company might need AI help. The pipeline
+looks for 15 kinds — 9 from SEC filings (E1–E9: things like new AI language in the
+annual report, a recent executive hire, a cost-cutting program, sales spend growing
+faster than revenue) and 6 from web research (P1–P6: AI job postings, sales-team
+hiring, AI announcements, product gaps vs competitors). Every signal carries its
+evidence — a URL and a quote wherever possible — so you can check the claim yourself.
 
-Scoring sums weighted signals into four components:
+Scoring adds the weighted signals up into four components:
 
 ```
 total = intent(≤30) + capability_gap(≤25) + timing(≤25) + commercial_fit(≤20)
 ```
 
-An LLM scorer reviews the deterministic base math and may deviate with justification.
-**Qualify**: total ≥ 65 AND at least one hard signal. **Disqualify**: total < 45.
-In between, the company stays in the review band for a human call.
-v2 tightens the gate: qualified also requires at least one fresh, structured outreach angle
-(funding event, leadership hire, or AI move) — see docs/SIGNALS.md.
+In plain terms: *do they want it, can they not do it themselves, is now the right
+time, and can they pay for it.* An LLM reviews that base math and may adjust it, but
+only with written justification.
 
-Qualified and review-band companies also get a **tier** (T1 = qualified above a
-higher score bar, T2 = qualified, T3 = review band, T4 = disqualified) and a
-**priority** score (total + evidence stacking + strongest fresh angle) that
-decides who `people` and `messages --prepare` work first once a per-run cap bites.
+**Qualify**: total ≥ 65 AND at least one hard signal AND at least one fresh outreach
+angle (a dated, concrete event to open an email with — a funding event, a leadership
+hire, or an AI move). **Disqualify**: total < 45. In between, the company waits in
+the review band for a human call.
+
+Qualified and review-band companies also get a **tier** (T1 = strongest, T4 =
+disqualified) and a **priority** score, so `people` and `messages --prepare` spend
+their per-run budget on the strongest accounts first.
 
 Full detection logic and weights: [docs/SIGNALS.md](docs/SIGNALS.md) and
 `config/settings.yaml`.
@@ -197,7 +226,11 @@ data/                # gitignored: caches, scoring/message queues+results, expor
 
 ## Adapting it to your own ICP
 
-Point the pipeline at a different business by running the **`/icp`** Claude
+The default configuration targets companies that fit martechs.io's ideal customer
+profile (ICP) — the kind of company it wants to sell to. If you sell something else,
+you can point the whole pipeline at *your* ideal customer without touching code.
+
+Run the **`/icp`** Claude
 Code skill — it interviews you (best/worst customers → discriminating
 attributes → point values → tier cutlines → sector/SIC vocabulary → services +
 voice) and writes the answers to a **profile pack** under `profiles/<name>/`.

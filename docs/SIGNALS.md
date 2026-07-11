@@ -1,5 +1,10 @@
 # Signal Taxonomy
 
+This is the catalog of evidence the pipeline looks for. A **signal** is one
+observable fact about a company — pulled from an SEC filing or from web research —
+that suggests it may need AI services. Each table row answers three questions:
+what do we detect, how do we detect it, and why does it mean the company might buy.
+
 Every signal carries evidence (URL + quote where possible) and a weight
 (configurable in `config/settings.yaml` → `scoring.weights`). Signals feed four
 scoring components: **intent**, **capability_gap**, **timing**, **commercial_fit**
