@@ -696,3 +696,24 @@ def test_packet_diversity_note_none_when_solo_contact(dirs):
     messages.prepare()
     pkt = anne_packet(q)
     assert pkt["diversity_note"] is None
+
+
+# ---------- dense-paragraph warning ----------
+
+def test_dense_paragraph_warns(packet):
+    """Voice rule "every sentence gets its own paragraph" — wall-of-text
+    paragraphs (3+ sentences on one line) get a warning-tier flag. Two-beat
+    idioms ("Worth sending over? No pitch attached.") stay allowed."""
+    dense = ("You have a new CEO and a raise that closed. The board wants "
+             "clarity on risk. We help close that gap. Are you seeing this too?")
+    hard, warn = _qa(seq_with_step(1, body=dense), packet)
+    assert any("sentence" in w and "paragraph" in w for w in warn)
+
+
+def test_two_sentence_line_and_ps_line_do_not_warn(packet):
+    # canonical bodies (incl. BODY2's "Worth sending over? No pitch attached.")
+    _, warn = _qa(make_seq(), packet)
+    assert not any("paragraph" in w for w in warn)
+    ps = BODY2.replace("\n\nUday", "\n\nP.S. They ship weekly. Worth watching.\n\nUday")
+    _, warn = _qa(seq_with_step(2, body=ps), packet)
+    assert not any("paragraph" in w for w in warn)

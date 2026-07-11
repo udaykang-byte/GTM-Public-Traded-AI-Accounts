@@ -549,6 +549,14 @@ def qa_check(seq: MessageSequence, packet: dict) -> tuple[list[str], list[str]]:
             warn.append(f"step {s.step} filing-speak ('{m.group(0)}')")
         if "—" in text:
             hard.append(f"step {s.step} contains an em dash — use a period or comma instead")
+        for line in s.body.splitlines():
+            # "every sentence gets its own paragraph": flag wall-of-text lines
+            # (3+ sentences). Two-beat idioms and P.S. lines stay allowed.
+            line = re.sub(r"^\s*P\.S\.?\s*", "", line.strip(), flags=re.IGNORECASE)
+            n_sent = 1 + len(re.findall(r"[.!?]+\s+(?=[A-Z\"'(])", line))
+            if n_sent >= 3:
+                warn.append(f"step {s.step} has a {n_sent}-sentence paragraph — every sentence gets its own paragraph")
+                break
 
     for extra in cfg.get("banned_words_extra", []) or []:
         pat = _banned_pattern(extra)
